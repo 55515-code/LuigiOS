@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+set -eu
+
+exec pkexec env \
+    DISPLAY="${DISPLAY:-}" \
+    WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+    XAUTHORITY="${XAUTHORITY:-}" \
+    XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-}" \
+    XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-}" \
+    "$@"

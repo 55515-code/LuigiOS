@@ -169,6 +169,8 @@ EOF
     touch "${ready}"
 fi
 
+echo "Preparing the pinned image profile from the current checkout..."
+"${ROOT}/tools/sdk" prepare
 rm -f "${ROOT}/.sdk/vm-build-status" "${ROOT}/.sdk/vm-build.log"
 touch "${ROOT}/.sdk/vm-build-request"
 echo "Building in the isolated VM with networking physically disabled..."

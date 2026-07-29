@@ -20,12 +20,15 @@ fi
 }
 
 metadata=$(xorriso -indev "${image}" -pvd_info 2>&1)
-grep -q "Volume Id    : 'LUIGIOS_" <<<"${metadata}" || {
+grep -Eiq "Volume (id|Id) +: '?LUIGIOS_" <<<"${metadata}" || {
     echo "ISO volume ID is not LuigiOS" >&2
     exit 1
 }
 
-listing=$(xorriso -indev "${image}" -find / -type f -print 2>/dev/null)
+listing=$(
+    xorriso -indev "${image}" -find / -type f -exec echo 2>/dev/null |
+        sed "s/^'//; s/'$//"
+)
 for required in \
     /arch/x86_64/airootfs.sfs \
     /loader/loader.conf \

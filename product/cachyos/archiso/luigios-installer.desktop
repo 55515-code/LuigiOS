@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install LuigiOS
+GenericName=System Installer
+Comment=Install LuigiOS on this computer
+Keywords=LuigiOS;Install;Installer;Calamares;System;
+Exec=/usr/local/bin/calamares-online.sh
+Icon=luigios-installer
+Terminal=false
+StartupNotify=true
+Categories=System;Settings;

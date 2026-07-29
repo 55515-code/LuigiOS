@@ -68,6 +68,10 @@ class ProductContract(unittest.TestCase):
             (ROOT / "tools/rootless-image").read_text(),
         )
         self.assertIn(
+            '"${ROOT}/tools/sdk" prepare',
+            (ROOT / "tools/rootless-image").read_text(),
+        )
+        self.assertIn(
             "Architecture = x86_64 x86_64_v2 x86_64_v3",
             sdk,
         )
@@ -137,9 +141,7 @@ class ProductContract(unittest.TestCase):
         self.assertIn('defaultFileSystemType: "btrfs"', partition)
         self.assertIn('availableFileSystemTypes: [ "btrfs" ]', partition)
 
-        bootloader = (installer / "packagechooser_bootloader.conf").read_text()
-        self.assertIn("limine", bootloader.lower())
-        self.assertNotIn("grub", bootloader.lower())
+        self.assertNotIn("packagechooser@bootloader", settings)
 
         initialization = (
             installer / "shellprocess_initialize_pacman.conf"
@@ -152,6 +154,7 @@ class ProductContract(unittest.TestCase):
             ROOT / "product/cachyos/archiso/profiledef.sh"
         ).read_text()
         self.assertIn("bootmodes=('uefi.systemd-boot')", profile)
+        self.assertIn("'-comp' 'zstd'", profile)
         self.assertNotIn("bios.syslinux", profile)
         self.assertNotIn("uefi.grub", profile)
         entries = ROOT / "product/cachyos/archiso/efiboot/loader/entries"
@@ -162,6 +165,38 @@ class ProductContract(unittest.TestCase):
         self.assertIn("LuigiOS Live - Performance kernel", rendered)
         self.assertIn("LuigiOS Live - Safe graphics", rendered)
         self.assertNotIn("CachyOS", rendered)
+        customize = (
+            ROOT / "product/cachyos/archiso/customize_airootfs.sh"
+        ).read_text()
+        self.assertIn("/usr/bin/mkinitcpio -P", customize)
+        self.assertNotIn("archiso_pxe", customize)
+        installer_entry = (
+            ROOT / "product/cachyos/archiso/luigios-installer.desktop"
+        ).read_text()
+        self.assertIn("Name=Install LuigiOS", installer_entry)
+        self.assertIn("Icon=luigios-installer", installer_entry)
+        launcher = (
+            ROOT
+            / "product/cachyos/archiso/calamares/calamares-online.sh"
+        ).read_text()
+        self.assertIn("pkexec-wrapper /usr/local/libexec/luigios-calamares", launcher)
+        self.assertEqual(
+            (
+                ROOT / "product/cachyos/overlay/etc/hostname"
+            ).read_text().strip(),
+            "luigios",
+        )
+        partition = (
+            ROOT / "product/cachyos/archiso/calamares/partition.conf"
+        ).read_text()
+        self.assertIn('userSwapChoices: [ "none" ]', partition)
+        self.assertEqual(partition.count('userSwapChoices: [ "none" ]'), 1)
+        settings = (
+            ROOT / "product/cachyos/archiso/calamares/settings_online.conf"
+        ).read_text()
+        self.assertNotIn("packagechooser@bootloader", settings)
+        self.assertIn('efiBootloaderId: "luigios"', customize)
+        self.assertNotIn("initialSwapChoice: none", partition)
 
     def test_installer_service_policy_matches_product(self):
         services = json.loads((ROOT / "product/cachyos/services.json").read_text())

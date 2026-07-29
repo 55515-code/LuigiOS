@@ -108,8 +108,6 @@ prepare() {
         "${PROFILE}/airootfs/usr/local/bin"
     install -m 0644 "${calamares}/settings_online.conf" \
         "${installer_bundle}/settings_online.conf"
-    install -m 0644 "${calamares}/packagechooser_bootloader.conf" \
-        "${installer_bundle}/packagechooser_bootloader.conf"
     install -m 0644 "${calamares}/shellprocess_luigios.conf" \
         "${installer_bundle}/shellprocess_luigios.conf"
     install -m 0644 "${calamares}/shellprocess_initialize_pacman.conf" \
@@ -120,6 +118,15 @@ prepare() {
         "${installer_bundle}/partition.conf"
     install -m 0755 "${calamares}/calamares-online.sh" \
         "${PROFILE}/airootfs/usr/local/bin/calamares-online.sh"
+    install -Dm0755 "${calamares}/luigios-calamares" \
+        "${PROFILE}/airootfs/usr/local/libexec/luigios-calamares"
+    install -m 0755 "${calamares}/pkexec-wrapper" \
+        "${PROFILE}/airootfs/usr/local/bin/pkexec-wrapper"
+    install -Dm0644 \
+        "${ROOT}/product/cachyos/archiso/luigios-installer.desktop" \
+        "${PROFILE}/airootfs/usr/share/applications/luigios-installer.desktop"
+    install -Dm0644 "${ROOT}/branding/assets/core/luigios-logo.svg" \
+        "${PROFILE}/airootfs/usr/share/icons/hicolor/scalable/apps/luigios-installer.svg"
     branding="${PROFILE}/airootfs/usr/share/calamares/branding/luigios"
     install -d "${branding}"
     install -m 0644 "${calamares}/branding.desc" "${branding}/branding.desc"
@@ -258,7 +265,9 @@ EOF
 
 verify_release_cache() {
     "${ROOT}/tools/package-lock" verify-cache "${CACHE}"
-    rm -f "${CACHE}/luigios-lock.db" "${CACHE}/luigios-lock.db.tar.zst"
+    rm -f "${CACHE}/luigios-lock.db" \
+        "${CACHE}/luigios-lock.db.tar.zst" \
+        "${CACHE}/luigios-lock.db.tar.zst.lck"
     mapfile -t package_filenames < <(
         jq -r '.packages[].filename' "${ROOT}/sdk/package-lock.json"
     )
