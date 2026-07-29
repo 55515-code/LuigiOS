@@ -1,6 +1,0 @@
-config BR2_PACKAGE_BATOCERA_LUIGIOS_BRANDING
-	bool "LuigiOS original branding assets"
-	help
-	  Install reviewed LuigiOS marks, semantic icons, boot stills, wallpapers,
-	  design tokens, and provenance into the immutable image. This package does
-	  not replace upstream graphics outside explicit LuigiOS consumers.

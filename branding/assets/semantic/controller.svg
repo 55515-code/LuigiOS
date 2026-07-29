@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
-  <title>Controller</title>
-  <g stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M7 8h10c2 0 3 2 3 4l-1 5c-.3 1.5-2.2 1.9-3.1.7L14 15h-4l-1.9 2.7C7.2 18.9 5.3 18.5 5 17l-1-5c0-2 1-4 3-4Z"/>
-    <path d="M8 11v4m-2-2h4m6-1h.01m2 2h.01"/>
-  </g>
-</svg>

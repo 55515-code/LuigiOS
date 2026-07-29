@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "luigios",
+  "name": "LuigiOS",
+  "version": "0.1.0-dev.1",
+  "base": {
+    "distribution": "CachyOS",
+    "architecture": "x86_64",
+    "microarchitecture": "x86-64-v3",
+    "image_builder": "archiso",
+    "bootloader": "limine",
+    "filesystem": "btrfs"
+  },
+  "desktop": {
+    "session": "cosmic",
+    "display_manager": "cosmic-greeter",
+    "exclusive": true
+  },
+  "update_model": {
+    "manager": "pacman",
+    "full_system_transactions_only": true,
+    "snapshots": "snapper",
+    "package_lock_required_for_release": true
+  },
+  "developer": {
+    "containers": "podman",
+    "editor": "code",
+    "rust_toolchain": "rustup",
+    "compiler_cache": "sccache",
+    "linker": "mold"
+  },
+  "decentralized_networking": {
+    "defining_feature": true,
+    "release_authority": "tuf",
+    "bulk_transport": "bittorrent-v2",
+    "fallbacks": ["https-webseed", "oci-distribution"],
+    "peer_default": "off",
+    "personal_sync": "syncthing-user-opt-in"
+  },
+  "security": {
+    "firewall": "ufw",
+    "firmware_updates": "fwupd",
+    "vulnerability_audit": "arch-audit",
+    "telemetry_default": "off",
+    "remote_login_default": "disabled"
+  }
+}

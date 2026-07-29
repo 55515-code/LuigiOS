@@ -1,0 +1,17 @@
+# Packages and package prefixes that violate the LuigiOS workstation contract.
+# A trailing * is a prefix match.
+plasma-*
+kde-*
+xfce4-*
+wayfire*
+sddm*
+ly
+gamescope*
+steam*
+retroarch*
+emulationstation*
+libretro-*
+pcsx*
+rpcs3*
+dolphin-emu*
+batocera-*

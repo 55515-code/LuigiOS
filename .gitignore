@@ -2,7 +2,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 private-bundles/
-rom-bundles/
 *.private-manifest.json
 .sdk/
 dist/

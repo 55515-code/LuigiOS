@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+systemd-sysusers
+systemd-tmpfiles --create
+if [[ ! -f /var/lib/luigios-peer/settings.json ]]; then
+    install -o luigios-peer -g luigios-peer -m 0640 \
+        /etc/luigios/peer/settings.json /var/lib/luigios-peer/settings.json
+fi
+
+install -d -m 0755 /var/lib/luigios
+
+mapfile -t enabled < <(
+    jq -r '.enabled[]' /usr/share/luigios/services.json
+)
+for unit in "${enabled[@]}"; do
+    systemctl enable "$unit"
+done
+
+mapfile -t disabled < <(
+    jq -r '.disabled[]' /usr/share/luigios/services.json
+)
+for unit in "${disabled[@]}"; do
+    systemctl disable "$unit" 2>/dev/null || true
+done
+
+mapfile -t masked < <(
+    jq -r '.masked[]' /usr/share/luigios/services.json
+)
+for unit in "${masked[@]}"; do
+    systemctl mask "${unit}"
+done
+
+systemctl set-default graphical.target
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw logging low
+ufw --force enable
+
+/usr/share/luigios/cosmic-rice/apply-system.sh
+touch /var/lib/luigios/firstboot-v1

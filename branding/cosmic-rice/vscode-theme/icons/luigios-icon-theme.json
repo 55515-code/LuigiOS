@@ -1,0 +1,78 @@
+{
+  "iconDefinitions": {
+    "_file": {"iconPath": "./file.svg"},
+    "_code": {"iconPath": "./code.svg"},
+    "_config": {"iconPath": "./config.svg"},
+    "_docs": {"iconPath": "./docs.svg"},
+    "_data": {"iconPath": "./data.svg"},
+    "_test": {"iconPath": "./test.svg"},
+    "_folder": {"iconPath": "./folder.svg"},
+    "_folderOpen": {"iconPath": "./folder-open.svg"},
+    "_folderCode": {"iconPath": "./folder-code.svg"},
+    "_folderCodeOpen": {"iconPath": "./folder-code-open.svg"}
+  },
+  "file": "_file",
+  "folder": "_folder",
+  "folderExpanded": "_folderOpen",
+  "folderNames": {
+    "src": "_folderCode",
+    "source": "_folderCode",
+    "lib": "_folderCode",
+    "app": "_folderCode",
+    "apps": "_folderCode",
+    "packages": "_folderCode",
+    "components": "_folderCode",
+    "scripts": "_folderCode",
+    "tools": "_folderCode"
+  },
+  "folderNamesExpanded": {
+    "src": "_folderCodeOpen",
+    "source": "_folderCodeOpen",
+    "lib": "_folderCodeOpen",
+    "app": "_folderCodeOpen",
+    "apps": "_folderCodeOpen",
+    "packages": "_folderCodeOpen",
+    "components": "_folderCodeOpen",
+    "scripts": "_folderCodeOpen",
+    "tools": "_folderCodeOpen"
+  },
+  "fileExtensions": {
+    "rs": "_code", "go": "_code", "py": "_code", "pyi": "_code",
+    "js": "_code", "jsx": "_code", "ts": "_code", "tsx": "_code",
+    "c": "_code", "h": "_code", "cc": "_code", "cpp": "_code",
+    "java": "_code", "kt": "_code", "swift": "_code", "sh": "_code",
+    "bash": "_code", "fish": "_code", "zsh": "_code", "lua": "_code",
+    "html": "_code", "css": "_code", "scss": "_code", "vue": "_code",
+    "svelte": "_code", "sql": "_code",
+    "json": "_config", "jsonc": "_config", "toml": "_config",
+    "yaml": "_config", "yml": "_config", "ini": "_config",
+    "conf": "_config", "config": "_config", "env": "_config",
+    "lock": "_config", "xml": "_config",
+    "md": "_docs", "mdx": "_docs", "txt": "_docs", "rst": "_docs",
+    "csv": "_data", "db": "_data", "sqlite": "_data", "parquet": "_data",
+    "test": "_test", "spec": "_test"
+  },
+  "fileNames": {
+    "Dockerfile": "_config",
+    "Containerfile": "_config",
+    "Makefile": "_config",
+    "Justfile": "_config",
+    "Cargo.toml": "_config",
+    "Cargo.lock": "_config",
+    "package.json": "_config",
+    "package-lock.json": "_config",
+    "README.md": "_docs",
+    "LICENSE": "_docs",
+    "CHANGELOG.md": "_docs"
+  },
+  "languageIds": {
+    "rust": "_code", "go": "_code", "python": "_code",
+    "javascript": "_code", "typescript": "_code",
+    "javascriptreact": "_code", "typescriptreact": "_code",
+    "shellscript": "_code", "html": "_code", "css": "_code",
+    "json": "_config", "jsonc": "_config", "yaml": "_config",
+    "toml": "_config", "markdown": "_docs"
+  },
+  "hidesExplorerArrows": false,
+  "showLanguageModeIcons": true
+}

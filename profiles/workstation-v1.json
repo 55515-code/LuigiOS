@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "profile": "luigios-workstation",
+  "audience": "software-developers",
+  "desktop": "cosmic",
+  "architecture": "x86-64-v3",
+  "priorities": [
+    "responsive-interactive-workloads",
+    "reproducible-builds",
+    "rollback-safe-updates",
+    "secure-by-default-local-development"
+  ],
+  "defaults": {
+    "container_engine": "podman",
+    "editor": "code",
+    "shell_tools": ["ripgrep", "fd", "fzf", "bat", "eza", "zoxide", "direnv"],
+    "remote_login": false,
+    "firewall": true,
+    "telemetry": false
+  }
+}

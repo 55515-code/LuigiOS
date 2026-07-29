@@ -1,22 +1,21 @@
 name: Bug report
-description: Report a reproducible OS, desktop, controller, storage, or emulator integration problem.
+description: Report a reproducible OS, COSMIC, developer-tool, or network problem.
 title: "[Bug]: "
 labels: [bug, needs-triage]
 body:
   - type: markdown
     attributes:
-      value: Never attach ROMs, BIOS, firmware, keys, credentials, saves, or unredacted private logs.
+      value: Never attach credentials, private keys, tokens, proprietary source, or unredacted logs.
   - type: input
     id: image
     attributes:
-      label: Image version or commit
+      label: Image version or source commit
     validations:
       required: true
-  - type: dropdown
-    id: deck
+  - type: input
+    id: hardware
     attributes:
-      label: Steam Deck model
-      options: [LCD, OLED, Other x86_64 hardware]
+      label: CPU, GPU, and network adapter
     validations:
       required: true
   - type: textarea
@@ -31,10 +30,13 @@ body:
       label: Expected and actual behavior
     validations:
       required: true
-  - type: textarea
-    id: hardware
+  - type: dropdown
+    id: peer
     attributes:
-      label: Dock, display, and controllers
+      label: Decentralized peer mode
+      options: [Disabled, Enabled without public DHT, Enabled with public DHT, Not relevant]
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:

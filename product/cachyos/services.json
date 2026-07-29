@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "enabled": [
+    "NetworkManager.service",
+    "ananicy-cpp.service",
+    "avahi-daemon.service",
+    "bluetooth.service",
+    "cosmic-greeter.service",
+    "fstrim.timer",
+    "paccache.timer",
+    "snapper-cleanup.timer",
+    "systemd-resolved.service",
+    "ufw.service"
+  ],
+  "disabled": [
+    "sshd.service"
+  ],
+  "masked": [],
+  "default_target": "graphical.target"
+}

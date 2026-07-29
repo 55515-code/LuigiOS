@@ -1,8 +1,0 @@
-config BR2_PACKAGE_BATOCERA_LUIGIOS_DEV_CONNECTIVITY
-	bool "batocera-luigios-dev-connectivity"
-	depends on BR2_PACKAGE_CONNMAN
-	help
-	  Experimental Developer Mode SSH connectivity guard. It monitors active
-	  development sessions and asks the existing ConnMan service to reconnect
-	  the last healthy Wi-Fi service with bounded backoff. It never restarts or
-	  replaces the host network stack and remains dormant outside Developer Mode.

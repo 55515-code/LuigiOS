@@ -1,19 +1,19 @@
 ## What changed
 
-## Why reuse or new code
+## Why this approach
 
-Name the upstream component or Batocera extension point reused. If this is new code,
-explain why an existing maintained component does not fit.
+Name the maintained upstream component or standard reused. Explain why new code
+is necessary and why a memory-safe implementation was or was not practical.
 
 ## Validation
 
 - [ ] `./tools/ci-check` passes
-- [ ] Clean-tree source qualification evidence is attached by GitHub Actions
-- [ ] Controller-only handheld behavior tested or marked not applicable
-- [ ] Docked display and external controller behavior tested or marked not applicable
-- [ ] Persistent-data migration and rollback described
-- [ ] No games, BIOS, firmware, keys, saves, credentials, or private logs included
-- [ ] Third-party source, version, license, and hashes recorded
+- [ ] Package changes include a reviewed dependency-lock refresh
+- [ ] COSMIC and developer workflows were tested or marked not applicable
+- [ ] Network changes preserve opt-in, privacy, confinement, and trust boundaries
+- [ ] Update and rollback behavior is described
+- [ ] No credentials, private keys, tokens, proprietary source, or private logs included
+- [ ] Third-party source, version, license, and hashes are recorded
 - [ ] Every commit includes a DCO `Signed-off-by` line
 
 ## Hardware evidence

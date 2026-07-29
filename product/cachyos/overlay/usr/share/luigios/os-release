@@ -1,0 +1,11 @@
+NAME="LuigiOS"
+PRETTY_NAME="LuigiOS 0.1 Developer Workstation"
+ID=luigios
+ID_LIKE="cachyos arch"
+BUILD_ID=rolling
+ANSI_COLOR="1;32"
+HOME_URL="https://github.com/LuigiOS"
+DOCUMENTATION_URL="https://github.com/LuigiOS/LuigiOS/tree/main/docs"
+SUPPORT_URL="https://github.com/LuigiOS/LuigiOS/issues"
+BUG_REPORT_URL="https://github.com/LuigiOS/LuigiOS/issues"
+LOGO=luigios

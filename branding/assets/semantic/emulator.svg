@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
-  <title>Emulator</title>
-  <g stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="4" y="5" width="16" height="14" rx="2"/>
-    <path d="m9 9-2 3 2 3m6-6 2 3-2 3m-4 2 2-10"/>
-  </g>
-</svg>

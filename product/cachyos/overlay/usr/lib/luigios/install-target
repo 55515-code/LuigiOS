@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target=${1:?target root is required}
+[[ -d "${target}/etc" ]] || {
+    echo "invalid target root: ${target}" >&2
+    exit 1
+}
+
+rsync -aHAX --exclude=/target-root \
+    /usr/share/luigios/ "${target}/usr/share/luigios/"
+rsync -aHAX /usr/share/luigios/target-root/ "${target}/"
+
+install -m 0644 /usr/share/luigios/pacman.conf "${target}/etc/pacman.conf"
+install -m 0644 /usr/share/luigios/os-release "${target}/usr/lib/os-release"
+ln -sfn ../usr/lib/os-release "${target}/etc/os-release"
+ln -sfn /usr/lib/systemd/system/cosmic-greeter.service \
+    "${target}/etc/systemd/system/display-manager.service"
+install -d "${target}/etc/systemd/system/multi-user.target.wants"
+ln -sfn /usr/lib/systemd/system/luigios-firstboot.service \
+    "${target}/etc/systemd/system/multi-user.target.wants/luigios-firstboot.service"
+install -d "${target}/etc/systemd/user/default.target.wants"
+ln -sfn /usr/lib/systemd/user/luigios-first-login.service \
+    "${target}/etc/systemd/user/default.target.wants/luigios-first-login.service"
+
+rm -f "${target}/etc/systemd/system/multi-user.target.wants/sshd.service"
+rm -f "${target}/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
+rm -f "${target}/etc/systemd/system/sockets.target.wants/systemd-networkd.socket"
+rm -f "${target}/etc/systemd/system/multi-user.target.wants/wpa_supplicant.service"

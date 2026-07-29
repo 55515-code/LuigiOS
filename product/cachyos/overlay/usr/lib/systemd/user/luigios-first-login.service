@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply LuigiOS COSMIC workstation defaults
+ConditionPathExists=!%S/luigios-rice/applied-v1
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/luigios/cosmic-rice/apply-user.sh
+
+[Install]
+WantedBy=default.target

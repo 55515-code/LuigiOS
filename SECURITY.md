@@ -1,13 +1,15 @@
-# Security Policy
+# Security policy
 
-The project is pre-release and does not yet publish security-supported builds.
+Report vulnerabilities privately to the project maintainers before public
+disclosure. Include affected version, reproducible steps, impact, and a minimal
+proof of concept. Do not attach credentials, private keys, tokens, or personal
+logs.
 
-Report vulnerabilities through the repository's private GitHub Security Advisory form.
-Do not open a public issue for signing-key exposure, update bypass, arbitrary command
-execution, privilege escalation, credential disclosure, or unintended sharing of user
-files. Include the affected commit/image, reproduction steps, impact, and any suggested
-mitigation. Avoid attaching ROMs, BIOS, firmware, keys, saves, tokens, or personal logs.
+High-priority areas are release authorization, signature or rollback bypass,
+package-lock substitution, privilege escalation, sandbox escape, peer cache
+exposure, stable identity leakage, and unauthorized user-file access.
 
-Stable releases will document a support window and coordinated-disclosure target before
-the first production image ships. No release will be called secure solely because its
-payload arrived through HTTPS or P2P; installation authority comes from signed metadata.
+Release transports are untrusted. A peer, tracker, mirror, web seed, or OCI
+registry must not decide what the system installs. Current system updates retain
+CachyOS/pacman signature verification; the planned decentralized release client
+must pass TUF integration and recovery qualification before it can stage updates.

@@ -3,185 +3,393 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../sdk/versions.env
-source "$ROOT/sdk/versions.env"
+source "${ROOT}/sdk/versions.env"
 
-STATE_DIR=${SDK_STATE_DIR:-"$ROOT/.sdk"}
-BATOCERA_DIR=${BATOCERA_DIR:-"$STATE_DIR/batocera"}
-OUTPUT_DIR=${SDK_OUTPUT_DIR:-"$STATE_DIR/output/x86_64"}
-DOWNLOAD_DIR=${SDK_DOWNLOAD_DIR:-"$STATE_DIR/downloads"}
-CCACHE_DIR=${SDK_CCACHE_DIR:-"$STATE_DIR/ccache"}
-if [[ -n ${CONTAINER_RUNTIME:-} ]]; then
-    RUNTIME=$CONTAINER_RUNTIME
-elif command -v docker >/dev/null 2>&1; then
-    RUNTIME=docker
-else
-    RUNTIME=podman
-fi
-RUNTIME_ARGS=()
-IDENTITY_ARGS=(-e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)")
-if [[ $RUNTIME == podman ]]; then
-    RUNTIME_ARGS+=(--userns=keep-id)
-    IDENTITY_ARGS=()
-fi
+STATE_DIR=${SDK_STATE_DIR:-"${ROOT}/.sdk"}
+UPSTREAM=${CACHYOS_ISO_DIR:-"${STATE_DIR}/CachyOS-Live-ISO"}
+PROFILE=${SDK_PROFILE_DIR:-"${STATE_DIR}/profile"}
+WORK=${SDK_WORK_DIR:-"${STATE_DIR}/work"}
+DIST=${SDK_OUTPUT_DIR:-"${ROOT}/dist"}
+CACHE=${SDK_PACKAGE_CACHE:-"${STATE_DIR}/package-cache"}
 
 usage() {
     cat <<'EOF'
-Usage: ./tools/sdk COMMAND [ARG]
+Usage: ./tools/sdk COMMAND
 
-Commands: doctor bootstrap config config-local package NAME image shell test qualify
+Commands:
+  doctor       Check workstation build dependencies
+  bootstrap    Fetch the pinned CachyOS Live ISO source
+  lock         Resolve and write the complete package lock
+  prepare      Create the LuigiOS Archiso profile
+  fetch        Download and verify all locked packages
+  verify-cache Prove the cache is a complete, mirror-independent repository
+  stage        Embed the locked repository and finalize the release profile
+  validate     Validate product, lock, scripts, and tests
+  image        Build a release ISO from the verified package cache (root)
+  image-dev    Build against current configured repositories (root, non-release)
+  inspect      Validate the completed ISO and write its SHA-256 file
+  clean        Remove generated Archiso work/profile output
 EOF
 }
 
-require_source() {
-    if [[ ! -d "$BATOCERA_DIR/.git" ]]; then
-        echo "Batocera source is absent. Run: ./tools/sdk bootstrap" >&2
+lock_build() {
+    mkdir -p "${STATE_DIR}"
+    exec 9>"${STATE_DIR}/build.lock"
+    flock -n 9 || {
+        echo "another SDK operation is using ${STATE_DIR}" >&2
         exit 1
-    fi
-    if [[ ! -f "$BATOCERA_DIR/buildroot/Makefile" ]]; then
-        echo "Buildroot submodule is absent. Run: ./tools/sdk bootstrap" >&2
-        exit 1
-    fi
-}
-
-generate_defconfig() {
-    make -C "$BATOCERA_DIR" x86_64-defconfig
-}
-
-ensure_dirs() {
-    mkdir -p "$OUTPUT_DIR" "$DOWNLOAD_DIR" "$CCACHE_DIR"
-}
-
-ensure_image() {
-    if ! "$RUNTIME" image inspect "$BATOCERA_BUILD_IMAGE" >/dev/null 2>&1; then
-        "$RUNTIME" pull "$BATOCERA_BUILD_IMAGE"
-    fi
-}
-
-docker_make() {
-    ensure_dirs
-    ensure_image
-    "$RUNTIME" run "${RUNTIME_ARGS[@]}" -t --init --rm \
-        -v "$BATOCERA_DIR:/build:ro" \
-        -v "$ROOT:/deck-ux:ro" \
-        -v "$OUTPUT_DIR:/workspace" \
-        -v "$DOWNLOAD_DIR:/downloads" \
-        -v "$CCACHE_DIR:/home/batocera/.buildroot-ccache" \
-        -w /workspace \
-        "${IDENTITY_ARGS[@]}" \
-        "$BATOCERA_BUILD_IMAGE" \
-        make "${MAKE_ARGS[@]}" O=/workspace \
-            BR2_EXTERNAL=/build:/deck-ux \
-            BR2_GLOBAL_PATCH_DIR=/deck-ux/product/patches \
-            BR2_DL_DIR=/downloads \
-            BR2_CCACHE_DIR=/home/batocera/.buildroot-ccache \
-            -C /build/buildroot "$@"
+    }
 }
 
 doctor() {
-    local failed=0 command
-    for command in git make; do
-        if command -v "$command" >/dev/null 2>&1; then
-            printf 'ok      %s\n' "$command"
+    local failed=0 tool
+    for tool in git pacman fakeroot python mkarchiso repo-add sha256sum jq rsync rsvg-convert xorriso; do
+        if command -v "${tool}" >/dev/null; then
+            printf 'ok      %s\n' "${tool}"
         else
-            printf 'missing %s\n' "$command"
+            printf 'missing %s\n' "${tool}"
             failed=1
         fi
     done
-    if command -v "$RUNTIME" >/dev/null 2>&1; then
-        printf 'ok      OCI runtime %s\n' "$RUNTIME"
-    else
-        printf 'missing OCI runtime (Docker or Podman)\n'
-        failed=1
-    fi
-    printf 'source  %s\n' "$BATOCERA_DIR"
-    printf 'output  %s\n' "$OUTPUT_DIR"
-    df -h "$ROOT" | tail -n 1
-    if [[ -d "$BATOCERA_DIR/.git" ]]; then
-        local actual
-        actual=$(git -C "$BATOCERA_DIR" rev-parse HEAD)
-        if [[ "$actual" == "$BATOCERA_COMMIT" ]]; then
-            printf 'ok      Batocera %s\n' "$actual"
-        else
-            printf 'warning Batocera is %s; SDK pins %s\n' "$actual" "$BATOCERA_COMMIT"
-        fi
-        if [[ -n "$(git -C "$BATOCERA_DIR" status --porcelain)" ]]; then
-            echo "warning Batocera checkout has local changes"
-        fi
-    fi
-    return "$failed"
+    printf 'pin     %s\n' "${CACHYOS_ISO_COMMIT}"
+    printf 'epoch   %s\n' "${SOURCE_DATE_EPOCH}"
+    return "${failed}"
 }
 
 bootstrap() {
-    if [[ ! -d "$BATOCERA_DIR/.git" ]]; then
-        mkdir -p "$(dirname -- "$BATOCERA_DIR")"
-        git clone --filter=blob:none "$BATOCERA_REPOSITORY" "$BATOCERA_DIR"
+    if [[ ! -d "${UPSTREAM}/.git" ]]; then
+        mkdir -p "$(dirname "${UPSTREAM}")"
+        git clone --filter=blob:none "${CACHYOS_ISO_REPOSITORY}" "${UPSTREAM}"
     fi
-    if [[ -n "$(git -C "$BATOCERA_DIR" status --porcelain)" ]]; then
-        echo "Refusing to change a dirty Batocera checkout: $BATOCERA_DIR" >&2
+    [[ -z "$(git -C "${UPSTREAM}" status --porcelain)" ]] || {
+        echo "refusing to alter dirty upstream checkout: ${UPSTREAM}" >&2
         exit 1
-    fi
-    git -C "$BATOCERA_DIR" fetch origin "$BATOCERA_COMMIT"
-    git -C "$BATOCERA_DIR" checkout --detach "$BATOCERA_COMMIT"
-    git -C "$BATOCERA_DIR" submodule update --init --depth 1 buildroot
+    }
+    git -C "${UPSTREAM}" fetch origin "${CACHYOS_ISO_COMMIT}"
+    git -C "${UPSTREAM}" checkout --detach "${CACHYOS_ISO_COMMIT}"
 }
 
-MAKE_ARGS=()
-if [[ ${SDK_JOBS:-} =~ ^[1-9][0-9]*$ ]]; then
-    MAKE_ARGS+=("-j${SDK_JOBS}")
-fi
+prepare() {
+    bootstrap
+    rm -rf "${PROFILE}"
+    mkdir -p "${PROFILE}"
+    git -C "${UPSTREAM}" archive "${CACHYOS_ISO_COMMIT}:archiso" |
+        tar -x -C "${PROFILE}"
+    install -m 0644 "${PROFILE}/pacman.conf" \
+        "${PROFILE}/.luigios-upstream-pacman.conf"
+
+    install -m 0644 "${ROOT}/product/cachyos/packages.x86_64" \
+        "${PROFILE}/packages.x86_64"
+    rm -f "${PROFILE}/packages_desktop.x86_64"
+    install -m 0644 "${ROOT}/product/cachyos/archiso/profiledef.sh" \
+        "${PROFILE}/profiledef.sh"
+    rm -rf "${PROFILE}/efiboot/loader"
+    rsync -a "${ROOT}/product/cachyos/archiso/efiboot/" \
+        "${PROFILE}/efiboot/"
+    install -Dm0755 "${ROOT}/product/cachyos/archiso/customize_airootfs.sh" \
+        "${PROFILE}/airootfs/root/customize_airootfs.sh"
+    rsync -a "${ROOT}/product/cachyos/overlay/" "${PROFILE}/airootfs/"
+
+    bundle="${PROFILE}/airootfs/usr/share/luigios"
+    install -d "${bundle}/cosmic-rice" "${bundle}/branding"
+    rsync -a "${ROOT}/branding/cosmic-rice/" "${bundle}/cosmic-rice/"
+    rsync -a "${ROOT}/branding/assets/" "${bundle}/branding/assets/"
+    install -m 0644 "${ROOT}/product/cachyos/services.json" \
+        "${bundle}/services.json"
+    install -m 0644 "${ROOT}/product/cachyos/pacman.conf" \
+        "${bundle}/pacman.conf"
+    install -d "${bundle}/target-root"
+    rsync -a "${ROOT}/product/cachyos/overlay/" "${bundle}/target-root/"
+
+    calamares="${ROOT}/product/cachyos/archiso/calamares"
+    installer_bundle="${bundle}/calamares"
+    install -d "${installer_bundle}" \
+        "${PROFILE}/airootfs/usr/share/calamares" \
+        "${PROFILE}/airootfs/usr/local/bin"
+    install -m 0644 "${calamares}/settings_online.conf" \
+        "${installer_bundle}/settings_online.conf"
+    install -m 0644 "${calamares}/packagechooser_bootloader.conf" \
+        "${installer_bundle}/packagechooser_bootloader.conf"
+    install -m 0644 "${calamares}/shellprocess_luigios.conf" \
+        "${installer_bundle}/shellprocess_luigios.conf"
+    install -m 0644 "${calamares}/shellprocess_initialize_pacman.conf" \
+        "${installer_bundle}/shellprocess_initialize_pacman.conf"
+    install -m 0644 "${calamares}/services-systemd.conf" \
+        "${installer_bundle}/services-systemd.conf"
+    install -m 0644 "${calamares}/partition.conf" \
+        "${installer_bundle}/partition.conf"
+    install -m 0755 "${calamares}/calamares-online.sh" \
+        "${PROFILE}/airootfs/usr/local/bin/calamares-online.sh"
+    branding="${PROFILE}/airootfs/usr/share/calamares/branding/luigios"
+    install -d "${branding}"
+    install -m 0644 "${calamares}/branding.desc" "${branding}/branding.desc"
+    install -m 0644 "${calamares}/show.qml" "${branding}/show.qml"
+    install -m 0644 "${calamares}/stylesheet.qss" "${branding}/stylesheet.qss"
+    rsvg-convert -w 256 -h 256 \
+        "${ROOT}/branding/assets/core/luigios-symbolic.svg" \
+        -o "${branding}/logo.png"
+    install -m 0644 "${branding}/logo.png" "${branding}/icon.png"
+    install -m 0644 \
+        "${ROOT}/branding/assets/desktop/wallpapers/luigios/1920x1080.png" \
+        "${branding}/welcome.png"
+
+    {
+        printf '%s\n' '---' 'basePackages:'
+        sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
+            awk 'NF { print "  - " $1 }'
+        cat <<'EOF'
+postInstallFiles:
+  - /etc/mkinitcpio.conf
+  - /etc/calamares/scripts/enable-ufw
+  - /etc/calamares/scripts/bootloader-post-setup
+  - /etc/calamares/scripts/btrfs-installation-snapshot
+EOF
+    } >"${installer_bundle}/pacstrap.conf"
+
+    install -m 0644 "${ROOT}/product/cachyos/pacman.conf" \
+        "${PROFILE}/airootfs/etc/pacman.conf"
+    install -m 0644 "${ROOT}/product/cachyos/pacman.conf" \
+        "${PROFILE}/airootfs/etc/pacman-more.conf"
+    ln -sfn ../usr/lib/os-release "${PROFILE}/airootfs/etc/os-release"
+
+    install -d "${PROFILE}/airootfs/etc/systemd/system" \
+        "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants" \
+        "${PROFILE}/airootfs/etc/systemd/user/default.target.wants"
+    ln -sfn /usr/lib/systemd/system/cosmic-greeter.service \
+        "${PROFILE}/airootfs/etc/systemd/system/display-manager.service"
+    ln -sfn /usr/lib/systemd/user/luigios-first-login.service \
+        "${PROFILE}/airootfs/etc/systemd/user/default.target.wants/luigios-first-login.service"
+    ln -sfn /usr/lib/systemd/system/luigios-firstboot.service \
+        "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/luigios-firstboot.service"
+    rm -f \
+        "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service" \
+        "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" \
+        "${PROFILE}/airootfs/etc/systemd/system/sockets.target.wants/systemd-networkd.socket" \
+        "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/wpa_supplicant.service" \
+        "${PROFILE}/airootfs/usr/local/bin/dmcheck" \
+        "${PROFILE}/airootfs/usr/local/bin/removeun" \
+        "${PROFILE}/airootfs/usr/local/bin/removeun-online" \
+        "${PROFILE}/airootfs/usr/local/bin/prepare-live-desktop.sh" \
+        "${PROFILE}/airootfs/etc/modules-load.d/zfs.conf"
+    find "${PROFILE}/airootfs" \( -iname '*plasma*' -o -iname '*sddm*' \) \
+        -print0 | xargs -0 -r rm -rf
+    printf '%s\n' "${CACHYOS_ISO_COMMIT}" >"${PROFILE}/.luigios-source-commit"
+    echo "prepared ${PROFILE} at ${CACHYOS_ISO_COMMIT}"
+}
+
+fetch_packages() {
+    "${ROOT}/tools/package-lock" validate
+    mkdir -p "${CACHE}"
+    local temporary
+    temporary=$(mktemp -d)
+    mkdir -p "${temporary}/sync" "${temporary}/local"
+    cp -a /var/lib/pacman/sync/*.db "${temporary}/sync/"
+    sed '/^\[options\]$/a DisableSandbox' /etc/pacman.conf \
+        >"${temporary}/pacman.conf"
+    python - "${ROOT}/sdk/package-lock.json" "${temporary}/sync" <<'PY'
+import hashlib, json, pathlib, sys
+lock = json.loads(pathlib.Path(sys.argv[1]).read_text())
+sync = pathlib.Path(sys.argv[2])
+for repository, expected in lock["sync_databases"].items():
+    path = sync / (repository + ".db")
+    actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+    if actual != expected["sha256"]:
+        raise SystemExit(f"sync database drifted: {repository}; regenerate the lock intentionally")
+PY
+    mapfile -t roots < <(
+        sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
+            awk 'NF { print $1 }'
+    )
+    local -a pacman_command=(pacman)
+    if [[ ${EUID} -ne 0 ]]; then
+        pacman_command=(fakeroot pacman)
+    fi
+    "${pacman_command[@]}" --dbpath "${temporary}" --config "${temporary}/pacman.conf" \
+        -Sw --noconfirm --cachedir "${CACHE}" -- "${roots[@]}"
+    "${ROOT}/tools/package-lock" verify-cache "${CACHE}"
+    rm -rf "${temporary}"
+}
+
+configure_locked_repo() {
+    verify_release_cache
+    cat >"${PROFILE}/pacman.conf.locked" <<EOF
+[options]
+Architecture = x86_64 x86_64_v2 x86_64_v3
+CheckSpace
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+ParallelDownloads = 5
+CacheDir = /var/cache/pacman/pkg/
+
+[luigios-lock]
+SigLevel = Required DatabaseOptional
+Server = file://${CACHE}
+EOF
+    mv "${PROFILE}/pacman.conf.locked" "${PROFILE}/pacman.conf"
+
+    live_cache="${PROFILE}/airootfs/var/cache/pacman/pkg"
+    rm -rf "${live_cache}"
+    install -d "${live_cache}"
+    mapfile -t package_filenames < <(
+        jq -r '.packages[].filename' "${ROOT}/sdk/package-lock.json"
+    )
+    for filename in "${package_filenames[@]}"; do
+        cp -al "${CACHE}/${filename}" "${live_cache}/"
+        if [[ -f "${CACHE}/${filename}.sig" ]]; then
+            cp -al "${CACHE}/${filename}.sig" "${live_cache}/"
+        fi
+    done
+    install -m 0644 "${CACHE}/luigios-lock.db.tar.zst" \
+        "${live_cache}/luigios-lock.db.tar.zst"
+    {
+        sed -n '1,/^\[cachyos-v3\]$/{
+            /^\[cachyos-v3\]$/q
+            p
+        }' "${ROOT}/product/cachyos/pacman.conf"
+        printf '\n[luigios-lock]\nSigLevel = Required DatabaseOptional\n'
+        printf 'Server = file:///var/cache/pacman/pkg\n\n'
+        sed -n '/^\[cachyos-v3\]$/,$p' "${ROOT}/product/cachyos/pacman.conf"
+    } >"${PROFILE}/airootfs/etc/pacman.conf"
+    install -m 0644 "${PROFILE}/airootfs/etc/pacman.conf" \
+        "${PROFILE}/airootfs/etc/pacman-more.conf"
+    sha256sum "${ROOT}/sdk/package-lock.json" |
+        awk '{ print $1 }' >"${PROFILE}/.luigios-release-staged"
+}
+
+verify_release_cache() {
+    "${ROOT}/tools/package-lock" verify-cache "${CACHE}"
+    rm -f "${CACHE}/luigios-lock.db" "${CACHE}/luigios-lock.db.tar.zst"
+    mapfile -t package_filenames < <(
+        jq -r '.packages[].filename' "${ROOT}/sdk/package-lock.json"
+    )
+    package_files=()
+    for filename in "${package_filenames[@]}"; do
+        package_files+=("${CACHE}/${filename}")
+    done
+    repo-add -q "${CACHE}/luigios-lock.db.tar.zst" "${package_files[@]}"
+
+    local temporary
+    temporary=$(mktemp -d)
+    mkdir -p "${temporary}/sync" "${temporary}/local"
+    cp "${CACHE}/luigios-lock.db.tar.zst" \
+        "${temporary}/sync/luigios-lock.db"
+    cat >"${temporary}/pacman.conf" <<EOF
+[options]
+Architecture = x86_64 x86_64_v2 x86_64_v3
+SigLevel = Never
+
+[luigios-lock]
+SigLevel = Required DatabaseOptional
+Server = file://${CACHE}
+EOF
+    mapfile -t roots < <(
+        sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
+            awk 'NF { print $1 }'
+    )
+    pacman --dbpath "${temporary}" --config "${temporary}/pacman.conf" \
+        -Sp --print-format '%n|%v|%r' -- "${roots[@]}" \
+        >"${temporary}/resolved"
+    python - "${ROOT}/sdk/package-lock.json" "${temporary}/resolved" <<'PY'
+import json, pathlib, sys
+lock = json.loads(pathlib.Path(sys.argv[1]).read_text())
+expected = {
+    (item["name"], item["version"], "luigios-lock")
+    for item in lock["packages"]
+}
+resolved = {
+    tuple(line.split("|", 2))
+    for line in pathlib.Path(sys.argv[2]).read_text().splitlines()
+    if line
+}
+missing = sorted(expected - resolved)
+unexpected = sorted(resolved - expected)
+if missing or unexpected:
+    details = []
+    if missing:
+        details.append("missing locked resolutions:\n" + "\n".join(map(str, missing)))
+    if unexpected:
+        details.append("unexpected resolutions:\n" + "\n".join(map(str, unexpected)))
+    raise SystemExit("\n".join(details))
+print(f"verified mirror-independent repository: {len(resolved)} exact packages")
+PY
+    rm -rf "${temporary}"
+}
+
+bootstrap_release_keyrings() {
+    local keyring_filename keyring_package temporary
+    keyring_filename=$(
+        jq -r '.packages[] | select(.name == "cachyos-keyring") | .filename' \
+            "${ROOT}/sdk/package-lock.json"
+    )
+    [[ -n "${keyring_filename}" && "${keyring_filename}" != null ]] || {
+        echo "locked CachyOS keyring package is missing" >&2
+        exit 1
+    }
+    keyring_package="${CACHE}/${keyring_filename}"
+    [[ -f "${keyring_package}" ]] || {
+        echo "cached CachyOS keyring package is missing" >&2
+        exit 1
+    }
+    temporary=$(mktemp -d)
+    bsdtar -xf "${keyring_package}" -C "${temporary}" usr/share/pacman/keyrings
+    install -d -m 0755 /usr/share/pacman/keyrings
+    install -m 0644 "${temporary}"/usr/share/pacman/keyrings/cachyos* \
+        /usr/share/pacman/keyrings/
+    rm -rf "${temporary}"
+    pacman-key --init
+    pacman-key --populate archlinux cachyos
+}
+
+build_image() {
+    local release=${1:-false}
+    [[ ${EUID} -eq 0 ]] || {
+        echo "image creation needs root; rerun this command with sudo or pkexec" >&2
+        exit 1
+    }
+    export SOURCE_DATE_EPOCH
+    [[ -f "${PROFILE}/.luigios-source-commit" ]] &&
+        [[ "$(<"${PROFILE}/.luigios-source-commit")" == "${CACHYOS_ISO_COMMIT}" ]] || {
+        echo "prepared profile missing or stale; run ./tools/sdk prepare as your user" >&2
+        exit 1
+    }
+    if [[ "${release}" == true ]]; then
+        expected_lock=$(sha256sum "${ROOT}/sdk/package-lock.json" | awk '{ print $1 }')
+        [[ -f "${PROFILE}/.luigios-release-staged" ]] &&
+            [[ "$(<"${PROFILE}/.luigios-release-staged")" == "${expected_lock}" ]] || {
+            echo "release profile is not staged for this lock; run ./tools/sdk stage" >&2
+            exit 1
+        }
+        bootstrap_release_keyrings
+    else
+        echo "warning: image-dev is not reproducible and cannot be released" >&2
+    fi
+    rm -rf "${WORK}"
+    mkdir -p "${DIST}"
+    mkarchiso -v -w "${WORK}" -o "${DIST}" "${PROFILE}"
+}
 
 case ${1:-} in
-    doctor)
-        doctor
-        ;;
-    bootstrap)
-        bootstrap
-        ;;
-    config)
-        require_source
-        generate_defconfig
-        docker_make batocera-x86_64_defconfig
-        ;;
-    config-local)
-        require_source
-        generate_defconfig
-        ensure_dirs
-        make -C "$BATOCERA_DIR/buildroot" O="$OUTPUT_DIR" \
-            BR2_EXTERNAL="$BATOCERA_DIR:$ROOT" \
-            BR2_DEFCONFIG="$BATOCERA_DIR/configs/batocera-x86_64_defconfig" defconfig
-        ;;
-    package)
-        [[ $# -eq 2 ]] || { usage; exit 2; }
-        require_source
-        generate_defconfig
-        docker_make batocera-x86_64_defconfig
-        docker_make "$2"
-        ;;
+    doctor) doctor ;;
+    bootstrap) lock_build; bootstrap ;;
+    lock) lock_build; "${ROOT}/tools/package-lock" generate ;;
+    prepare) lock_build; prepare ;;
+    fetch) lock_build; fetch_packages ;;
+    verify-cache) lock_build; verify_release_cache ;;
+    stage) lock_build; configure_locked_repo ;;
+    validate) "${ROOT}/tools/ci-check" ;;
     image)
-        require_source
-        generate_defconfig
-        docker_make batocera-x86_64_defconfig
-        docker_make
+        if [[ ${EUID} -eq 0 || ${LUIGIOS_ROOTLESS_BUILDER:-0} == 1 ]]; then
+            lock_build
+            build_image true
+        else
+            exec "${ROOT}/tools/rootless-image"
+        fi
         ;;
-    shell)
-        require_source
-        ensure_dirs
-        ensure_image
-        exec "$RUNTIME" run "${RUNTIME_ARGS[@]}" -it --init --rm \
-            -v "$BATOCERA_DIR:/build:ro" -v "$ROOT:/deck-ux:ro" \
-            -v "$OUTPUT_DIR:/workspace" -v "$DOWNLOAD_DIR:/downloads" \
-            -v "$CCACHE_DIR:/home/batocera/.buildroot-ccache" \
-            -w /workspace "$BATOCERA_BUILD_IMAGE" bash
+    image-dev) lock_build; build_image false ;;
+    inspect) "${ROOT}/tools/inspect-image" "${2:-}" ;;
+    clean)
+        lock_build
+        rm -rf "${WORK}" "${PROFILE}"
         ;;
-    test)
-        exec "$ROOT/tools/ci-check"
-        ;;
-    qualify)
-        shift
-        exec "$ROOT/tools/qualify-source" run "$@"
-        ;;
-    *)
-        usage
-        exit 2
-        ;;
+    *) usage; exit 2 ;;
 esac

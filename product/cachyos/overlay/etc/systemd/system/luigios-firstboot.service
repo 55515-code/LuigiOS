@@ -1,0 +1,12 @@
+[Unit]
+Description=Finalize the LuigiOS CachyOS workstation
+After=local-fs.target
+ConditionPathExists=!/var/lib/luigios/firstboot-v1
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/luigios/firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

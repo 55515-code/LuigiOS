@@ -1,0 +1,30 @@
+{
+  "name": "luigios-workstation-theme",
+  "displayName": "LuigiOS Workstation",
+  "description": "Professional LuigiOS colors and file icons for Code - OSS.",
+  "version": "1.0.0",
+  "publisher": "luigios",
+  "license": "CC-BY-SA-4.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "LuigiOS Workstation",
+        "uiTheme": "vs-dark",
+        "path": "./themes/luigios-workstation-color-theme.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "luigios-icons",
+        "label": "LuigiOS Icons",
+        "path": "./icons/luigios-icon-theme.json"
+      }
+    ]
+  }
+}

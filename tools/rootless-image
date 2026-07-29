@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+VM_DIR=${LUIGIOS_VM_DIR:-"${ROOT}/.sdk/vm-builder"}
+RUNNER_IMAGE=${LUIGIOS_VM_RUNNER_IMAGE:-localhost/luigios-qemu-runner:2026.07.1}
+CLOUD_NAME=Arch-Linux-x86_64-cloudimg-20260715.556894.qcow2
+CLOUD_URL=https://geo.mirror.pkgbuild.com/images/v20260715.556894/${CLOUD_NAME}
+CLOUD_SHA256=f419d4e29aebfc017ad4c9de330a3be0d7eefba710b269108b116aaca1122926
+
+command -v podman >/dev/null || {
+    echo "unattended image builds require rootless Podman" >&2
+    exit 1
+}
+command -v xorriso >/dev/null || {
+    echo "unattended image builds require xorriso for cloud-init media" >&2
+    exit 1
+}
+[[ "$(podman info --format '{{.Host.Security.Rootless}}')" == true ]] || {
+    echo "refusing host-root Podman; run as your normal user" >&2
+    exit 1
+}
+[[ -r /dev/kvm && -w /dev/kvm ]] || {
+    echo "/dev/kvm is unavailable to this user; the builder VM cannot start" >&2
+    exit 1
+}
+
+mkdir -p "${VM_DIR}"
+if ! podman image exists "${RUNNER_IMAGE}"; then
+    echo "Bootstrapping the digest-pinned QEMU runner once..."
+    podman build --pull=never --tag "${RUNNER_IMAGE}" \
+        --file "${ROOT}/sdk/Containerfile" "${ROOT}"
+fi
+
+base="${VM_DIR}/${CLOUD_NAME}"
+disk="${VM_DIR}/luigios-builder.qcow2"
+ready="${VM_DIR}/ready"
+if [[ ! -f "${base}" ]]; then
+    echo "Fetching the pinned official Arch builder image..."
+    curl --fail --location --output "${base}.part" "${CLOUD_URL}"
+    printf '%s  %s\n' "${CLOUD_SHA256}" "${base}.part" | sha256sum --check -
+    mv "${base}.part" "${base}"
+fi
+
+run_qemu() {
+    local network=$1 seed=${2:-}
+    local -a args=(
+        --rm
+        --device /dev/kvm
+        --security-opt label=disable
+        --volume "${ROOT}:/workspace:rw"
+        --volume "${VM_DIR}:/vm:rw"
+    )
+    if [[ "${network}" == none ]]; then
+        args+=(--network=none)
+    else
+        args+=(--network=host)
+    fi
+    args+=(
+        "${RUNNER_IMAGE}"
+        -machine accel=kvm:tcg
+        -cpu host
+        -m "${LUIGIOS_VM_MEMORY:-8192}"
+        -smp "${LUIGIOS_VM_CPUS:-8}"
+        -drive file=/vm/luigios-builder.qcow2,if=virtio,cache=writeback
+        -virtfs local,path=/workspace,mount_tag=workspace,security_model=none
+        -nographic
+        -no-reboot
+    )
+    if [[ "${network}" == none ]]; then
+        args+=(-nic none)
+    else
+        args+=(-nic user,model=virtio-net-pci)
+    fi
+    [[ -z "${seed}" ]] ||
+        args+=(-drive "file=/vm/${seed},media=cdrom,readonly=on")
+    podman run "${args[@]}"
+}
+
+if [[ -f "${disk}" && ! -f "${ready}" ]]; then
+    incomplete="${VM_DIR}/luigios-builder.incomplete.$(date -u +%Y%m%dT%H%M%SZ).qcow2"
+    echo "Preserving an interrupted builder disk at ${incomplete}"
+    mv "${disk}" "${incomplete}"
+fi
+
+if [[ ! -f "${ready}" ]]; then
+    cp --reflink=auto "${base}" "${disk}"
+    podman run --rm \
+        --security-opt label=disable \
+        --volume "${VM_DIR}:/vm:rw" \
+        --entrypoint /usr/bin/qemu-img \
+        "${RUNNER_IMAGE}" resize /vm/luigios-builder.qcow2 48G
+    seed_dir=$(mktemp -d "${VM_DIR}/seed.XXXXXX")
+    trap 'rm -rf "${seed_dir}"' EXIT
+    cat >"${seed_dir}/meta-data" <<'EOF'
+instance-id: luigios-builder-202607
+local-hostname: luigios-builder
+EOF
+    cat >"${seed_dir}/user-data" <<'EOF'
+#cloud-config
+package_update: true
+packages:
+  - archiso
+  - git
+  - jq
+  - librsvg
+  - pacman-contrib
+  - python
+  - rsync
+  - squashfs-tools
+  - xorriso
+write_files:
+  - path: /etc/systemd/system/workspace.mount
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=LuigiOS source workspace
+      [Mount]
+      What=workspace
+      Where=/workspace
+      Type=9p
+      Options=trans=virtio,version=9p2000.L,msize=1048576,cache=mmap
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/libexec/luigios-vm-build
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set +e
+      cd /workspace
+      mkdir -p /build
+      LUIGIOS_ROOTLESS_BUILDER=1 SDK_WORK_DIR=/build/luigios-work \
+        ./tools/sdk stage > /workspace/.sdk/vm-build.log 2>&1
+      status=$?
+      if [[ "${status}" == 0 ]]; then
+        LUIGIOS_ROOTLESS_BUILDER=1 SDK_WORK_DIR=/build/luigios-work \
+          ./tools/sdk image >> /workspace/.sdk/vm-build.log 2>&1
+        status=$?
+      fi
+      printf '%s\n' "${status}" > /workspace/.sdk/vm-build-status
+      rm -f /workspace/.sdk/vm-build-request
+      sync
+      systemctl --no-block poweroff --force
+      exit "${status}"
+  - path: /etc/systemd/system/luigios-vm-build.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Unattended LuigiOS release image build
+      Requires=workspace.mount
+      After=workspace.mount
+      ConditionPathExists=/workspace/.sdk/vm-build-request
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/libexec/luigios-vm-build
+      TimeoutStartSec=infinity
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - systemctl enable workspace.mount luigios-vm-build.service
+  - systemctl poweroff
+EOF
+    xorriso -as mkisofs -quiet -volid cidata -joliet -rock \
+        -output "${VM_DIR}/seed.iso" \
+        "${seed_dir}/user-data" "${seed_dir}/meta-data"
+    echo "Provisioning the isolated builder VM once..."
+    run_qemu online seed.iso
+    rm -f "${VM_DIR}/seed.iso"
+    touch "${ready}"
+fi
+
+rm -f "${ROOT}/.sdk/vm-build-status" "${ROOT}/.sdk/vm-build.log"
+touch "${ROOT}/.sdk/vm-build-request"
+echo "Building in the isolated VM with networking physically disabled..."
+run_qemu none
+
+status_file="${ROOT}/.sdk/vm-build-status"
+[[ -f "${status_file}" ]] || {
+    echo "builder VM stopped without reporting status" >&2
+    exit 1
+}
+status=$(<"${status_file}")
+[[ "${status}" == 0 ]] || {
+    echo "builder VM reported failure: ${status}" >&2
+    echo "Last builder log lines:" >&2
+    tail -n 80 "${ROOT}/.sdk/vm-build.log" >&2 || true
+    exit "${status}"
+}
+echo "builder VM completed successfully"

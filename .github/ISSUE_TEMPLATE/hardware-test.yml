@@ -13,7 +13,7 @@ body:
     id: hardware
     attributes:
       label: Hardware inventory
-      description: Deck model, BIOS, storage, dock, display, controller, and connection type.
+      description: CPU, GPU, firmware, storage, display, network adapter, and connection type.
     validations:
       required: true
   - type: dropdown
@@ -32,7 +32,7 @@ body:
     id: results
     attributes:
       label: Test results
-      description: Include boot, suspend, desktop lifecycle, controller reconnect, dock, audio, update, and rollback.
+      description: Include boot, suspend, COSMIC, display, network, audio, development tools, update, and rollback.
     validations:
       required: true
   - type: textarea

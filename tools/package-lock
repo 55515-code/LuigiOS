@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Create and validate the complete LuigiOS pacman dependency lock."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MANIFEST = ROOT / "product/cachyos/packages.x86_64"
+LOCK = ROOT / "sdk/package-lock.json"
+SYNC = Path("/var/lib/pacman/sync")
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def roots() -> list[str]:
+    return [
+        line.split("#", 1)[0].strip()
+        for line in MANIFEST.read_text().splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+
+
+def sync_records(database: Path) -> dict[tuple[str, str], dict[str, str]]:
+    records: dict[tuple[str, str], dict[str, str]] = {}
+    with tarfile.open(database, "r:*") as archive:
+        for member in archive:
+            if not member.name.endswith("/desc"):
+                continue
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            lines = extracted.read().decode().splitlines()
+            fields: dict[str, str] = {}
+            index = 0
+            while index < len(lines):
+                if lines[index].startswith("%") and lines[index].endswith("%"):
+                    key = lines[index].strip("%")
+                    index += 1
+                    values = []
+                    while index < len(lines) and lines[index]:
+                        values.append(lines[index])
+                        index += 1
+                    if values:
+                        fields[key] = values[0]
+                index += 1
+            if "NAME" in fields and "VERSION" in fields:
+                records[(fields["NAME"], fields["VERSION"])] = fields
+    return records
+
+
+def generate(output: Path) -> None:
+    if not SYNC.is_dir():
+        raise SystemExit("pacman sync databases are missing; run sudo pacman -Sy")
+    manifest_roots = roots()
+    with tempfile.TemporaryDirectory(prefix="luigios-lock-") as temporary:
+        dbpath = Path(temporary)
+        (dbpath / "sync").mkdir()
+        (dbpath / "local").mkdir()
+        databases: dict[str, dict[str, str]] = {}
+        indexes: dict[str, dict[tuple[str, str], dict[str, str]]] = {}
+        for source in sorted(SYNC.glob("*.db")):
+            target = dbpath / "sync" / source.name
+            shutil.copy2(source, target)
+            repository = source.stem
+            databases[repository] = {"sha256": sha256(source)}
+            indexes[repository] = sync_records(source)
+        command = [
+            "pacman", "--dbpath", str(dbpath), "--config", "/etc/pacman.conf",
+            "-Sp", "--print-format", "%n|%v|%r|%l", "--", *manifest_roots,
+        ]
+        result = subprocess.run(command, text=True, capture_output=True)
+        if result.returncode:
+            sys.stderr.write(result.stderr)
+            raise SystemExit(result.returncode)
+        closure = []
+        direct = set(manifest_roots)
+        for line in sorted(set(result.stdout.splitlines())):
+            name, version, repository, _url = line.split("|", 3)
+            record = indexes.get(repository, {}).get((name, version))
+            if record is None:
+                raise SystemExit(f"{repository}/{name} {version} absent from sync DB")
+            closure.append({
+                "name": name,
+                "version": version,
+                "repository": repository,
+                "filename": record["FILENAME"],
+                "sha256": record["SHA256SUM"],
+                "direct": name in direct,
+            })
+    epoch = None
+    for line in (ROOT / "sdk/versions.env").read_text().splitlines():
+        if line.startswith("SOURCE_DATE_EPOCH="):
+            epoch = int(line.partition("=")[2])
+    document = {
+        "schema": 1,
+        "architecture": "x86_64_v3",
+        "source_date_epoch": epoch,
+        "sync_databases": databases,
+        "roots": manifest_roots,
+        "packages": closure,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+    print(f"locked {len(closure)} packages in {output}")
+
+
+def validate(lock: Path) -> None:
+    data = json.loads(lock.read_text())
+    required = {"schema", "architecture", "source_date_epoch", "roots", "packages"}
+    if not required <= data.keys() or data["schema"] != 1:
+        raise SystemExit("invalid package lock schema")
+    if data["roots"] != roots():
+        raise SystemExit("package roots changed; regenerate sdk/package-lock.json")
+    packages = data["packages"]
+    names = [package["name"] for package in packages]
+    if len(names) != len(set(names)):
+        raise SystemExit("duplicate package names in lock")
+    if not set(data["roots"]) <= set(names):
+        raise SystemExit("one or more direct package roots are absent from lock")
+    for package in packages:
+        if len(package["sha256"]) != 64 or not package["filename"]:
+            raise SystemExit(f"incomplete lock record: {package.get('name')}")
+    print(f"valid package lock: {len(packages)} packages")
+
+
+def verify_cache(lock: Path, cache: Path) -> None:
+    data = json.loads(lock.read_text())
+    failures = []
+    for package in data["packages"]:
+        artifact = cache / package["filename"]
+        if not artifact.is_file() or sha256(artifact) != package["sha256"]:
+            failures.append(package["filename"])
+    if failures:
+        raise SystemExit("missing or invalid cached packages:\n" + "\n".join(failures))
+    print(f"verified {len(data['packages'])} cached packages")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    make = sub.add_parser("generate")
+    make.add_argument("--output", type=Path, default=LOCK)
+    check = sub.add_parser("validate")
+    check.add_argument("--lock", type=Path, default=LOCK)
+    cache = sub.add_parser("verify-cache")
+    cache.add_argument("directory", type=Path)
+    cache.add_argument("--lock", type=Path, default=LOCK)
+    args = parser.parse_args()
+    if args.command == "generate":
+        generate(args.output)
+    elif args.command == "validate":
+        validate(args.lock)
+    else:
+        verify_cache(args.lock, args.directory)
+
+
+if __name__ == "__main__":
+    main()
