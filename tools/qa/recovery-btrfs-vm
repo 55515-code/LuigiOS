@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""Destructive Btrfs recovery test for a guarded disposable VM disk."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+ENGINE_PATH = (
+    ROOT
+    / "product/cachyos/overlay/usr/lib/luigios/recovery_engine.py"
+)
+SPEC = importlib.util.spec_from_file_location("recovery_engine", ENGINE_PATH)
+ENGINE = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(ENGINE)
+EXPECTED_SERIAL = "LUIGIOS_RECOVERY_QA"
+MAXIMUM_BYTES = 8 * 1024 * 1024 * 1024
+
+
+def run(arguments, *, capture=True):
+    return subprocess.run(
+        arguments,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+
+
+def guard_device(device: pathlib.Path) -> None:
+    if os.environ.get("LUIGIOS_DESTRUCTIVE_VM_TEST") != "1":
+        raise RuntimeError("destructive VM-test guard is not enabled")
+    resolved = device.resolve()
+    result = run(
+        [
+            "lsblk",
+            "--bytes",
+            "--nodeps",
+            "--noheadings",
+            "--output",
+            "TYPE,SIZE,SERIAL",
+            str(resolved),
+        ]
+    )
+    fields = result.stdout.split()
+    if len(fields) != 3:
+        raise RuntimeError(f"unexpected disposable disk identity: {fields}")
+    kind, size, serial = fields
+    if (
+        kind != "disk"
+        or serial != EXPECTED_SERIAL
+        or int(size) > MAXIMUM_BYTES
+    ):
+        raise RuntimeError(
+            f"refusing unguarded disk: type={kind} size={size} serial={serial}"
+        )
+    mounted = run(
+        ["lsblk", "--noheadings", "--output", "MOUNTPOINTS", str(resolved)]
+    ).stdout.strip()
+    if mounted:
+        raise RuntimeError(f"disposable disk is already mounted: {mounted}")
+
+
+def digest_tree(root: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    hardlinks = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        information = path.lstat()
+        digest.update(os.fsencode(str(relative)))
+        digest.update(information.st_uid.to_bytes(8, "big"))
+        digest.update(information.st_gid.to_bytes(8, "big"))
+        digest.update(information.st_mode.to_bytes(8, "big"))
+        digest.update(information.st_mtime_ns.to_bytes(16, "big"))
+        digest.update(information.st_blocks.to_bytes(16, "big"))
+        for name in sorted(os.listxattr(path, follow_symlinks=False)):
+            digest.update(os.fsencode(name))
+            digest.update(
+                os.getxattr(path, name, follow_symlinks=False)
+            )
+        if path.is_symlink():
+            digest.update(os.fsencode(os.readlink(path)))
+        elif path.is_file():
+            identity = (information.st_dev, information.st_ino)
+            if information.st_nlink > 1:
+                hardlinks.setdefault(identity, str(relative))
+                digest.update(os.fsencode(hardlinks[identity]))
+            digest.update(ENGINE.sha256_file(path).encode())
+    return digest.hexdigest()
+
+
+def mount(device: pathlib.Path, target: pathlib.Path, subvolume=None) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    arguments = ["mount"]
+    if subvolume:
+        arguments.extend(["-o", f"subvol=/{subvolume},compress=zstd"])
+    arguments.extend([str(device), str(target)])
+    run(arguments)
+
+
+def unmount(targets) -> None:
+    for target in reversed(targets):
+        subprocess.run(
+            ["umount", "-R", str(target)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", type=pathlib.Path, required=True)
+    parser.add_argument("--report", type=pathlib.Path, required=True)
+    options = parser.parse_args()
+    guard_device(options.device)
+    device = options.device.resolve()
+    work = pathlib.Path("/run/luigios-recovery-vm-test")
+    top = work / "top"
+    system = work / "system"
+    rebooted = work / "rebooted"
+    mounted = []
+    report = {
+        "schema": 1,
+        "kind": "luigios-btrfs-recovery-vm",
+        "created_unix": int(time.time()),
+        "device_serial": EXPECTED_SERIAL,
+        "scenarios": [],
+        "passed": False,
+    }
+    try:
+        run(["mkfs.btrfs", "--force", "--label", "LUIGIOS_RECOVERY_QA", str(device)])
+        mount(device, top)
+        mounted.append(top)
+        for name in (
+            "@",
+            "@home",
+            "@root",
+            "@srv",
+            "@cache",
+            "@luigios-state",
+            "@log",
+            "@tmp",
+        ):
+            run(["btrfs", "subvolume", "create", str(top / name)])
+        mount(device, system, "@")
+        mounted.append(system)
+        policy = ENGINE.load_policy(ROOT / "profiles/recovery-v1.json")
+        for mountpoint, subvolume in policy["filesystem"][
+            "persistent_subvolumes"
+        ].items():
+            path = ENGINE.rooted(system, mountpoint)
+            mount(device, path, subvolume)
+            mounted.append(path)
+
+        (system / "etc/NetworkManager/system-connections").mkdir(
+            parents=True
+        )
+        (system / "etc/kernel").mkdir(parents=True)
+        (system / "etc/luigios").mkdir(parents=True)
+        (system / "etc/os-release").write_text("ID=luigios\n")
+        (system / "etc/hostname").write_text("luigios-vm\n")
+        (system / "etc/pacman.conf").write_text("[luigios]\n")
+        connection = (
+            system
+            / "etc/NetworkManager/system-connections/development.nmconnection"
+        )
+        connection.write_text("[connection]\nid=Development\n")
+        connection.chmod(0o600)
+        os.link(connection, connection.with_name("development-hardlink.nmconnection"))
+        os.setxattr(connection, "user.luigios", b"preserved")
+        (system / "etc/fstab").write_text(
+            "LABEL=LUIGIOS_RECOVERY_QA / btrfs defaults,subvol=/@ 0 0\n"
+            "LABEL=LUIGIOS_RECOVERY_QA /home btrfs defaults,subvol=/@home 0 0\n"
+            "LABEL=LUIGIOS_RECOVERY_QA /var/lib/luigios btrfs "
+            "defaults,subvol=/@luigios-state 0 0\n"
+        )
+        (system / "etc/kernel/cmdline").write_text(
+            "root=LABEL=LUIGIOS_RECOVERY_QA rw rootflags=subvol=/@\n"
+        )
+        user_file = system / "home/developer/Projects/設定.txt"
+        user_file.parent.mkdir(parents=True)
+        user_file.write_text("irreplaceable user data\n")
+        os.setxattr(user_file, "user.luigios-integrity", b"must-survive")
+        run(["setfacl", "-m", "u:65534:r--", str(user_file)])
+        os.link(user_file, user_file.with_name("設定-hardlink.txt"))
+        (user_file.parent / "latest-settings").symlink_to(user_file.name)
+        sparse = system / "home/developer/VMs/workstation.raw"
+        sparse.parent.mkdir()
+        with sparse.open("wb") as stream:
+            stream.seek(16 * 1024 * 1024)
+            stream.write(b"end")
+        home_before = digest_tree(system / "home")
+
+        snapshots = top / "@/.snapshots"
+        run(["btrfs", "subvolume", "create", str(snapshots)])
+        (snapshots / "1").mkdir()
+        run(
+            [
+                "btrfs",
+                "subvolume",
+                "snapshot",
+                "-r",
+                str(top / "@"),
+                str(snapshots / "1/snapshot"),
+            ]
+        )
+        marker = system / "var/lib/luigios/recovery/installation-snapshot"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("1\n")
+        (system / "etc/pacman.conf").write_text("[custom-unstable]\n")
+
+        bundle = (
+            system
+            / "var/lib/luigios/recovery/transactions/vm-test/preservation"
+        )
+        ENGINE.capture_preservation(system, bundle, policy)
+        verified = ENGINE.verify_preservation(bundle)
+        report["scenarios"].append(
+            {
+                "name": "preservation-manifest",
+                "passed": verified["valid"],
+                "entries": verified["entries"],
+            }
+        )
+        persistent_before = {
+            path: ENGINE.subvolume_identity(ENGINE.rooted(system, path))
+            for path in policy["filesystem"]["persistent_subvolumes"]
+        }
+        new_root = top / "@luigios-fresh-vmtest"
+        run(
+            [
+                "btrfs",
+                "subvolume",
+                "snapshot",
+                str(snapshots / "1/snapshot"),
+                str(new_root),
+            ]
+        )
+        ENGINE.restore_preservation(bundle, new_root)
+        ENGINE.patch_subvolume_boot(new_root, "@", new_root.name)
+        report["scenarios"].append(
+            {
+                "name": "new-root-created-without-old-root-deletion",
+                "passed": (top / "@").is_dir() and new_root.is_dir(),
+            }
+        )
+        report["scenarios"].append(
+            {
+                "name": "risky-pacman-override-quarantined",
+                "passed": (
+                    (new_root / "etc/pacman.conf").read_text()
+                    != "[custom-unstable]\n"
+                ),
+            }
+        )
+
+        mount(device, rebooted, new_root.name)
+        mounted.append(rebooted)
+        mount(device, rebooted / "home", "@home")
+        mounted.append(rebooted / "home")
+        persistent_after = {
+            path: ENGINE.subvolume_identity(ENGINE.rooted(system, path))
+            for path in policy["filesystem"]["persistent_subvolumes"]
+        }
+        report["scenarios"].append(
+            {
+                "name": "persistent-subvolume-identities-unchanged",
+                "passed": persistent_before == persistent_after,
+                "before": persistent_before,
+                "after": persistent_after,
+            }
+        )
+        report["scenarios"].append(
+            {
+                "name": "user-data-digest-unchanged-after-cutover",
+                "passed": digest_tree(rebooted / "home") == home_before,
+                "digest": home_before,
+            }
+        )
+
+        tampered = bundle / "payload/etc/hostname"
+        tampered.write_text("tampered\n")
+        rejected = False
+        try:
+            ENGINE.restore_preservation(bundle, new_root)
+        except ENGINE.RecoveryError:
+            rejected = True
+        report["scenarios"].append(
+            {
+                "name": "failure-injection-rejected-before-cutover",
+                "passed": rejected and (top / "@").is_dir(),
+            }
+        )
+        report["passed"] = all(
+            scenario["passed"] for scenario in report["scenarios"]
+        )
+    except Exception as error:
+        report["error"] = str(error)
+    finally:
+        unmount(mounted)
+    options.report.parent.mkdir(parents=True, exist_ok=True)
+    options.report.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=LuigiOS
+Description=Quiet LuigiOS boot identity
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/luigios
+ScriptFile=/usr/share/plymouth/themes/luigios/luigios.script

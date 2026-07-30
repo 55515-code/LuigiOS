@@ -1,5 +1,0 @@
-menu "Batocera Deck UX"
-
-source "$BR2_EXTERNAL_BATOCERA_DECK_UX_PATH/product/package/batocera-deck-bua/Config.in"
-
-endmenu

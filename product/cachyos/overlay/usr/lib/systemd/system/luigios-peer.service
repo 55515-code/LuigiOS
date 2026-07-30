@@ -1,0 +1,42 @@
+[Unit]
+Description=LuigiOS opt-in decentralized distribution peer
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/luigios/peer/enabled
+
+[Service]
+Type=simple
+User=luigios-peer
+Group=luigios-peer
+ExecStartPre=/usr/bin/cp /etc/luigios/peer/settings.json /var/lib/luigios-peer/settings.json
+ExecStart=/usr/bin/transmission-daemon --foreground --config-dir /var/lib/luigios-peer
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ReadWritePaths=/var/cache/luigios/objects /var/lib/luigios-peer
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

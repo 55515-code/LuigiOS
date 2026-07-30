@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "generator": "tools/render-brand-assets",
+  "license": "CC-BY-SA-4.0",
+  "files": {
+    "caretaker-angel.png": "b87147d4b40e1ebb1176431f71f456aedeecf7baa2ad32c75b7d3873f28f6aee",
+    "caretaker-demon.png": "1a68a7c9169f8e8a557fe4f8ebec7fc79158dbbed4e72b4692d9a20a003c7e54",
+    "recovery.svg": "b9ee43e39d3a8241159bf73899d2eefb681f11e010aab29314ff256df2051914"
+  }
+}

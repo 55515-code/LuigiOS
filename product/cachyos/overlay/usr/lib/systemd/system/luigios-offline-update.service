@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply a verified LuigiOS offline update
+Documentation=file:///usr/share/doc/luigios/RECOVERY.md
+After=local-fs.target
+ConditionPathIsSymbolicLink=/system-update
+SuccessAction=reboot
+FailureAction=reboot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/luigios/recovery_engine.py offline-upgrade
+TimeoutStartSec=infinity
+OOMScoreAdjust=-900
+StandardOutput=journal
+StandardError=journal

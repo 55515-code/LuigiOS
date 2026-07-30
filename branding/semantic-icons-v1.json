@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "icons": {
+    "arcade": "assets/semantic/arcade.svg",
+    "computer": "assets/semantic/computer.svg",
+    "controller": "assets/semantic/controller.svg",
+    "emulator": "assets/semantic/emulator.svg",
+    "handheld": "assets/semantic/handheld.svg",
+    "home-console": "assets/semantic/home-console.svg",
+    "media": "assets/semantic/media.svg",
+    "network": "assets/semantic/network.svg",
+    "recovery": "assets/semantic/recovery.svg",
+    "settings": "assets/semantic/settings.svg",
+    "storage": "assets/semantic/storage.svg",
+    "update": "assets/semantic/update.svg"
+  },
+  "design_rule": "Use original LuigiOS geometry; do not trace, distort, or recolor a vendor mark."
+}

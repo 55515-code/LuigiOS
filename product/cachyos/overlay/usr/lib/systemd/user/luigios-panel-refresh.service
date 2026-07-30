@@ -1,0 +1,12 @@
+[Unit]
+Description=Complete the LuigiOS COSMIC panel on first login
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionPathExists=!%S/luigios-rice/panel-refreshed-v1
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/luigios/refresh-cosmic-panel
+
+[Install]
+WantedBy=graphical-session.target

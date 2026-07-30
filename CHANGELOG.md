@@ -2,15 +2,20 @@
 
 ## 0.1.0-dev.1
 
-First public-development source milestone.
-
-- Steam Deck Batocera prototype lifecycle, controller, storage, and recovery scripts.
-- Pinned Batocera Unofficial Add-Ons package integration.
-- Private firmware/config/save and separate ROM-library migration profiles and tooling.
-- TUF-authorized P2P distribution policy with upstream Batocera swarm federation.
-- Trusted Vault and per-system library sharing design contracts.
-- Btrfs Restore Points proposal.
-- Side-by-side Batocera Buildroot SDK with Docker/Podman support.
-- Governance, DCO, credits automation, issue forms, CI, and release/test procedures.
-
-This milestone is source and architecture for contributors, not an end-user OS image.
+- Rebased LuigiOS on a pinned official CachyOS Live ISO revision and Archiso.
+- Made COSMIC the exclusive desktop with `cosmic-greeter`.
+- Added a full SHA-256 dependency closure for reproducible release images.
+- Added a CachyOS x86-64-v3 developer workstation package and service contract.
+- Added rollback-safe package transactions, firewall defaults, audit tooling,
+  containers, current compiler stacks, and supply-chain tooling.
+- Established decentralized distribution as a defining capability: TUF authority,
+  opt-in confined peer delivery, HTTPS/OCI fallbacks, SLSA provenance, Sigstore
+  verification, and SPDX SBOM generation.
+- Added a complete LuigiOS rice for boot, COSMIC, terminal, icons, and Code - OSS.
+- Added one Setup & Recovery experience for installation, full offline
+  upgrades, package repair, and data-preserving Fresh Start.
+- Added a machine-readable recovery policy, permanent installation restore
+  point, PolicyKit boundary, preservation manifests, tamper detection, and
+  guarded rootless/disposable-VM recovery qualification.
+- Removed the former entertainment-oriented platform, compatibility packages,
+  prototypes, profiles, assets, and tests.

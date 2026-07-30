@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+image=${1:-}
+if [[ -z "${image}" ]]; then
+    mapfile -t images < <(
+        find "${ROOT}/dist" -maxdepth 1 -type f -name 'luigios-*.iso' -print |
+            sort
+    )
+    [[ ${#images[@]} -eq 1 ]] || {
+        echo "expected exactly one LuigiOS ISO in ${ROOT}/dist; pass a path explicitly" >&2
+        exit 1
+    }
+    image=${images[0]}
+fi
+[[ -f "${image}" ]] || {
+    echo "ISO not found: ${image}" >&2
+    exit 1
+}
+
+metadata=$(xorriso -indev "${image}" -pvd_info 2>&1)
+grep -Eiq "Volume (id|Id) +: '?LUIGIOS_" <<<"${metadata}" || {
+    echo "ISO volume ID is not LuigiOS" >&2
+    exit 1
+}
+
+listing=$(
+    xorriso -indev "${image}" -find / -type f -exec echo 2>/dev/null |
+        sed "s/^'//; s/'$//"
+)
+for required in \
+    /arch/x86_64/airootfs.sfs \
+    /loader/loader.conf \
+    /loader/entries/01-luigios-lts.conf \
+    /loader/entries/02-luigios-performance.conf \
+    /loader/entries/03-luigios-safe-graphics.conf
+do
+    grep -Fxq "${required}" <<<"${listing}" || {
+        echo "required ISO payload missing: ${required}" >&2
+        exit 1
+    }
+done
+
+if grep -Eiq 'batocera|steam|gamescope|retroarch|emulationstation|plasma|sddm' \
+    <<<"${listing}"; then
+    echo "legacy or alternate-desktop path found in ISO" >&2
+    exit 1
+fi
+
+checksum="${image}.sha256"
+(
+    cd -- "$(dirname -- "${image}")"
+    sha256sum "$(basename -- "${image}")"
+) >"${checksum}.tmp"
+mv "${checksum}.tmp" "${checksum}"
+printf 'verified ISO: %s\nchecksum: %s\n' "${image}" "${checksum}"

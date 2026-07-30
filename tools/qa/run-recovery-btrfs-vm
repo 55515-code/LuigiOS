@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+runner=${LUIGIOS_VM_RUNNER_IMAGE:-localhost/luigios-qemu-runner:2026.07.1}
+builder="${root}/.sdk/vm-builder/luigios-builder.qcow2"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+qa_dir="${root}/.sdk/recovery-qa/${run_id}"
+seed_dir="${qa_dir}/seed"
+report="${root}/.sdk/recovery-qa/btrfs-vm-report.json"
+
+[[ -r "${builder}" ]] || {
+    echo "the provisioned rootless LuigiOS builder VM is missing" >&2
+    exit 1
+}
+[[ -r /dev/kvm && -w /dev/kvm ]] || {
+    echo "/dev/kvm is unavailable to this user" >&2
+    exit 1
+}
+[[ "$(podman info --format '{{.Host.Security.Rootless}}')" == true ]] || {
+    echo "refusing non-rootless Podman" >&2
+    exit 1
+}
+podman image exists "${runner}" || {
+    echo "the digest-pinned LuigiOS QEMU runner is missing" >&2
+    exit 1
+}
+
+install -d "${seed_dir}"
+cp --reflink=auto --sparse=always "${builder}" "${qa_dir}/system.qcow2"
+qemu-img create -f qcow2 "${qa_dir}/recovery.qcow2" 4G >/dev/null
+
+cat >"${seed_dir}/meta-data" <<EOF
+instance-id: luigios-recovery-${run_id}
+local-hostname: luigios-recovery-qa
+EOF
+cat >"${seed_dir}/user-data" <<'EOF'
+#cloud-config
+package_update: false
+bootcmd:
+  - mkdir -p /workspace
+  - mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=mmap workspace /workspace
+  - |
+    systemd-run --no-block --unit=luigios-recovery-qa \
+      /bin/bash -c '
+      set +e
+      export LUIGIOS_DESTRUCTIVE_VM_TEST=1
+      /workspace/tools/qa/recovery-btrfs-vm \
+        --device /dev/disk/by-id/virtio-LUIGIOS_RECOVERY_QA \
+        --report /workspace/.sdk/recovery-qa/btrfs-vm-report.json \
+        >/workspace/.sdk/recovery-qa/btrfs-vm.log 2>&1
+      status=$?
+      sync
+      systemctl --no-block poweroff --force
+      exit "${status}"
+      '
+EOF
+xorriso -as mkisofs -quiet -volid cidata -joliet -rock \
+    -output "${qa_dir}/seed.iso" \
+    "${seed_dir}/user-data" "${seed_dir}/meta-data"
+
+podman run --rm \
+    --device /dev/kvm \
+    --network=none \
+    --security-opt label=disable \
+    --volume "${root}:/workspace:rw" \
+    --volume "${qa_dir}:/qa:rw" \
+    "${runner}" \
+    -machine accel=kvm:tcg \
+    -cpu host \
+    -m 4096 \
+    -smp 4 \
+    -drive file=/qa/system.qcow2,if=none,id=system,format=qcow2,cache=writeback \
+    -device virtio-blk-pci,drive=system,bootindex=1 \
+    -drive file=/qa/recovery.qcow2,if=none,id=recovery,format=qcow2 \
+    -device virtio-blk-pci,drive=recovery,serial=LUIGIOS_RECOVERY_QA,bootindex=2 \
+    -drive file=/qa/seed.iso,media=cdrom,readonly=on \
+    -virtfs local,path=/workspace,mount_tag=workspace,security_model=none \
+    -nographic \
+    -nic user,model=virtio-net-pci,restrict=on \
+    -no-reboot
+
+[[ -f "${report}" ]] || {
+    echo "recovery VM stopped without a report" >&2
+    exit 1
+}
+jq -e '.passed == true' "${report}" >/dev/null
+cat "${report}"

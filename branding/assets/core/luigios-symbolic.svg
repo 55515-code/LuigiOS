@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <title>LuigiOS</title>
+  <path d="M32 3 56 17v30L32 61 8 47V17Z" fill="#121416" stroke="#66FF66" stroke-width="4"/>
+  <path d="M23 18v24h20" stroke="#F5F7FA" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="23" cy="18" r="4" fill="#22C55E"/><circle cx="43" cy="42" r="4" fill="#22C55E"/>
+</svg>

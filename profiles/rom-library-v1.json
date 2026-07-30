@@ -1,8 +1,0 @@
-{
-  "schema": 1,
-  "name": "steamdeck-rom-library",
-  "description": "Private user-owned game library. Never distribute this bundle.",
-  "components": [
-    {"category": "rom", "path": "/userdata/roms", "exclude": ["steam/**", "flatpak/**", "ports/**"]}
-  ]
-}

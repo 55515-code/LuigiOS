@@ -2,8 +2,7 @@ name: Draft source release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: write
@@ -18,14 +17,17 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - name: Require a matching version tag
-        run: test "${GITHUB_REF_NAME}" = "v$(cat VERSION)"
-      - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev
-      - name: Run the complete validation gate
-        run: ./tools/ci-check
+      - name: Require matching version and validate source
+        run: |
+          test "${GITHUB_REF_NAME}" = "v$(cat VERSION)"
+          ./tools/ci-check
       - name: Build reproducible contributor source archive
         run: ./tools/release-source
+      - name: Add dependency lock and digest
+        run: |
+          cp sdk/package-lock.json "dist/luigios-$(cat VERSION).package-lock.json"
+          sha256sum "dist/luigios-$(cat VERSION).package-lock.json" \
+            > "dist/luigios-$(cat VERSION).package-lock.json.sha256"
       - name: Create human-gated draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,5 +37,5 @@ jobs:
             --verify-tag \
             --draft \
             --generate-notes \
-            --title "Batocera Deck UX ${GITHUB_REF_NAME}" \
+            --title "LuigiOS ${GITHUB_REF_NAME}" \
             dist/*

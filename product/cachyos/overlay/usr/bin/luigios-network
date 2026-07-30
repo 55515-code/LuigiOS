@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "Usage: luigios-network status|enable-peer|disable-peer"
+}
+
+case ${1:-} in
+    status)
+        systemctl status luigios-peer.service --no-pager || true
+        ;;
+    enable-peer)
+        [[ ${EUID} -eq 0 ]] || exec pkexec "$0" "$@"
+        install -Dm0644 /dev/null /etc/luigios/peer/enabled
+        systemctl enable --now luigios-peer.service
+        ;;
+    disable-peer)
+        [[ ${EUID} -eq 0 ]] || exec pkexec "$0" "$@"
+        systemctl disable --now luigios-peer.service || true
+        unlink /etc/luigios/peer/enabled 2>/dev/null || true
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Rootless recovery preservation and failure-injection simulation."""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import pathlib
+import tempfile
+import time
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+ENGINE_PATH = (
+    ROOT
+    / "product/cachyos/overlay/usr/lib/luigios/recovery_engine.py"
+)
+SPEC = importlib.util.spec_from_file_location("recovery_engine", ENGINE_PATH)
+ENGINE = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(ENGINE)
+
+
+def tree_digest(root: pathlib.Path) -> str:
+    digest = __import__("hashlib").sha256()
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        information = path.lstat()
+        digest.update(os.fsencode(str(relative)))
+        digest.update(information.st_mode.to_bytes(8, "big"))
+        if path.is_symlink():
+            digest.update(os.fsencode(os.readlink(path)))
+        elif path.is_file():
+            digest.update(ENGINE.sha256_file(path).encode())
+    return digest.hexdigest()
+
+
+def run() -> dict:
+    policy = ENGINE.load_policy(ROOT / "profiles/recovery-v1.json")
+    scenarios = []
+    with tempfile.TemporaryDirectory(prefix="luigios-recovery-sim-") as raw:
+        workspace = pathlib.Path(raw)
+        current = workspace / "current-root"
+        fresh = workspace / "fresh-root"
+        home = workspace / "home-subvolume"
+        for root in (current, fresh):
+            (root / "etc/NetworkManager/system-connections").mkdir(
+                parents=True
+            )
+            (root / "etc/pacman.d").mkdir(parents=True)
+        home.mkdir()
+
+        unicode_file = home / "Projects/Λουίτζι/設定.txt"
+        unicode_file.parent.mkdir(parents=True)
+        unicode_file.write_text("user work remains in place\n")
+        sparse = home / "VMs/development.raw"
+        sparse.parent.mkdir()
+        with sparse.open("wb") as stream:
+            stream.seek(8 * 1024 * 1024)
+            stream.write(b"end")
+        home_before = tree_digest(home)
+
+        (current / "etc/hostname").write_text("luigios-sim\n")
+        connection = (
+            current
+            / "etc/NetworkManager/system-connections/development.nmconnection"
+        )
+        connection.write_text("[connection]\nid=Development\n")
+        connection.chmod(0o600)
+        duplicate = connection.with_name("development-hardlink.nmconnection")
+        os.link(connection, duplicate)
+        (current / "etc/localtime").symlink_to(
+            "../usr/share/zoneinfo/America/New_York"
+        )
+        (current / "etc/pacman.conf").write_text("[unsafe-custom-repo]\n")
+        try:
+            os.setxattr(connection, "user.luigios", b"integrity")
+        except OSError:
+            pass
+
+        (fresh / "etc/hostname").write_text("factory-default\n")
+        (fresh / "etc/pacman.conf").write_text("[luigios]\n")
+        bundle = workspace / "transaction/preservation"
+        manifest = ENGINE.capture_preservation(current, bundle, policy)
+        verification = ENGINE.verify_preservation(bundle)
+        scenarios.append(
+            {
+                "name": "capture-and-verify",
+                "passed": verification["valid"],
+                "entries": len(manifest["entries"]),
+            }
+        )
+
+        ENGINE.restore_preservation(bundle, fresh)
+        restored_a = (
+            fresh
+            / "etc/NetworkManager/system-connections/development.nmconnection"
+        )
+        restored_b = restored_a.with_name(
+            "development-hardlink.nmconnection"
+        )
+        scenarios.append(
+            {
+                "name": "safe-settings-and-hardlinks",
+                "passed": (
+                    (fresh / "etc/hostname").read_text() == "luigios-sim\n"
+                    and restored_a.stat().st_ino == restored_b.stat().st_ino
+                ),
+            }
+        )
+        scenarios.append(
+            {
+                "name": "risky-overrides-quarantined",
+                "passed": (
+                    (fresh / "etc/pacman.conf").read_text() == "[luigios]\n"
+                ),
+            }
+        )
+        scenarios.append(
+            {
+                "name": "home-subvolume-unchanged",
+                "passed": tree_digest(home) == home_before,
+                "digest": home_before,
+            }
+        )
+
+        tampered = bundle / "payload/etc/hostname"
+        tampered.write_text("tampered\n")
+        rejected = False
+        try:
+            ENGINE.restore_preservation(bundle, fresh)
+        except ENGINE.RecoveryError:
+            rejected = True
+        scenarios.append(
+            {
+                "name": "tampered-bundle-rejected",
+                "passed": rejected,
+            }
+        )
+
+    return {
+        "schema": 1,
+        "kind": "luigios-recovery-simulation",
+        "created_unix": int(time.time()),
+        "scenarios": scenarios,
+        "passed": all(item["passed"] for item in scenarios),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--report", type=pathlib.Path)
+    options = parser.parse_args()
+    report = run()
+    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if options.report:
+        options.report.parent.mkdir(parents=True, exist_ok=True)
+        options.report.write_text(rendered)
+    print(rendered, end="")
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

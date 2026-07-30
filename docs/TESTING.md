@@ -1,34 +1,16 @@
-# Test Strategy
+# Testing
 
-## Pull-request gate
+`./tools/ci-check` validates the product contract, dependency lock, scripts, and
+legacy-tree removal. `./tools/sdk prepare` exercises the pinned Archiso overlay.
 
-- Python unit tests, JSON policy invariants, shell syntax, and warning-clean bridge build.
-- Repository hygiene scan for private payloads, credentials, moving remote execution,
-  and oversized accidental artifacts.
-- Migration tamper, conflict-backup, and dry-run behavior.
+Release qualification additionally covers:
 
-## Candidate image gate
-
-- Clean image boot and first-boot storage initialization.
-- Gaming Mode, Plasma launch/return, forced-session recovery, suspend/resume, and reboot.
-- Built-in controls plus DualSense connect, reconnect, cursor, clicks, OSK, and exit chord.
-- Handheld 1280x800 plus HDMI dock/undock, TV overscan, audio route, and controller order.
-- Representative emulator launches, save/load/state, hotkeys, and return to ES.
-- Private firmware and ROM migration dry-run, import, verify, low-space, and interruption.
-- Update stage, power loss, failed health check, automatic fallback, rollback, and reset.
-- Btrfs restore-point create/prune/restore, metadata ENOSPC, nested subvolumes, and ext4 fallback.
-
-Attach a hardware report to candidate pull requests. Record Deck model, BIOS, image digest,
-dock/controller models, display mode, exact test cases, results, logs, and screenshots.
-Passing one developer Deck is prototype evidence, not product qualification.
-
-## Android compatibility stretch gate
-
-- Verify kernel Binder support, container isolation, GPU acceleration, audio, network, input,
-  touch, OSK, screen rotation, clipboard policy, and full-screen Wayland presentation.
-- Test launch/exit, controller hotplug, dock/undock, suspend/resume, low storage, runtime reset,
-  app-data backup/restore, and removal without affecting Batocera or Plasma sessions.
-- Maintain an app matrix separating x86-native, translated ARM, DRM/attestation-dependent, and
-  unsupported hardware-dependent applications; passing a storefront launch is not sufficient.
-- Never place GMS or Play Store artifacts in project CI, caches, source releases, or images
-  unless a documented redistribution license and release approval explicitly cover them.
+- two clean builds and extracted filesystem-manifest comparison;
+- live and installed UEFI boot, Btrfs layout, full upgrades, snapshots, rollback;
+- AMD, Intel, and NVIDIA graphics; audio, Wi-Fi, Bluetooth, suspend, firmware;
+- COSMIC greeter/session, icons, wallpaper, terminal, Code - OSS, accessibility;
+- Podman, Distrobox, Rust, C/C++, Python, Node.js, Go, Java, debuggers, sccache;
+- peer disabled by default, explicit enable/disable, DHT/privacy controls,
+  metered/battery policy, cache quotas, service confinement, and corrupt objects;
+- package signature and future TUF failure modes: expiry, rollback, freeze,
+  mix-and-match, wrong length/hash, compromised mirror, and unavailable peers.

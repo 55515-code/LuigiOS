@@ -1,43 +1,17 @@
 # Contributing
 
-Thanks for helping make a friendly, controller-first Batocera experience for Steam
-Deck hardware. Small, tested changes are welcome; opening an issue first is useful
-for image architecture, update security, storage layout, and user-data migrations.
+LuigiOS is a CachyOS-derived COSMIC developer workstation with secure,
+decentralized distribution.
 
-## Good first contributions
+Before sending a change:
 
-- Reproduce and document a hardware or controller issue.
-- Add focused tests around migration, lifecycle, or policy behavior.
-- Improve a graphical workflow without adding a terminal-only requirement.
-- Package an existing maintained upstream project with pinned source and licensing.
-- Improve translations, accessibility, diagnostics, or recovery documentation.
+1. Keep `product/cachyos/product.json`, package roots, services, and docs aligned.
+2. Regenerate `sdk/package-lock.json` after intentional package changes.
+3. Preserve the rule that transports provide bytes but never installation authority.
+4. Keep peer features opt-in, resource-bounded, privacy-explicit, and confined.
+5. Prefer memory-safe implementations for new privileged or network-facing code.
+6. Run `./tools/ci-check` and include hardware validation for relevant changes.
 
-## Pull requests
-
-1. Keep proprietary games, BIOS, firmware, keys, saves, credentials, and private
-   migration bundles out of commits, fixtures, logs, screenshots, and Actions artifacts.
-2. Prefer established upstream projects and Batocera extension points. Explain why a
-   new implementation is needed when no maintained component fits.
-3. Include automated tests and the smallest relevant physical-device test record.
-4. Describe rollback and migration behavior for persistent `/userdata` changes.
-5. Preserve controller-only operation at 1280x800 and on a docked television.
-
-Run the local gate before opening a pull request:
-
-```bash
-./tools/ci-check
-```
-
-For image and package work, use the side-by-side [project SDK](sdk/README.md). It
-wraps the pinned upstream Batocera Buildroot and official build container.
-
-Commits must include a Developer Certificate of Origin sign-off created with
-`git commit -s`. The [DCO](DCO) keeps contribution rights clear without requiring
-a separate contributor agreement.
-
-Use draft pull requests early. Maintainers may ask for a design note under `docs/rfcs/`
-before accepting a change that alters trust, boot, update, storage, or privilege boundaries.
-
-Contributors are credited through Git history, release notes, and substantial-project
-acknowledgements. Use the name you want shown publicly in your Git commit author field and
-run `./tools/update-credits` before opening the pull request.
+Use signed commits and follow the Developer Certificate of Origin in `DCO`.
+Do not add a second desktop, partial-upgrade workflow, unpinned release input, or
+network daemon enabled without a documented threat model.

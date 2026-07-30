@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "product": "LuigiOS",
+  "variant": "CachyOS COSMIC Developer Workstation",
+  "accent": "#65d46e",
+  "surfaces": [
+    "boot",
+    "plymouth",
+    "greeter",
+    "cosmic",
+    "icons",
+    "terminal",
+    "code-oss",
+    "recovery",
+    "decentralized-networking"
+  ],
+  "installer": {
+    "system": "cosmic-rice/apply-system.sh",
+    "user": "cosmic-rice/apply-user.sh"
+  }
+}

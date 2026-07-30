@@ -1,0 +1,44 @@
+{
+  "schema": 2,
+  "feature": "decentralized-distribution",
+  "authority": {
+    "metadata": "tuf",
+    "transport_can_authorize": false,
+    "consistent_snapshots": true,
+    "threshold_offline_root": true,
+    "rollback_and_freeze_protection": true
+  },
+  "transports": {
+    "preferred": "bittorrent-v2",
+    "fallbacks": ["https-webseed", "oci-distribution"],
+    "public_dht_default": false,
+    "peer_exchange_default": false,
+    "seeding_default": false
+  },
+  "supply_chain": {
+    "provenance": "slsa-v1.2",
+    "signatures": "sigstore-bundle",
+    "sbom": "spdx-json",
+    "promotion": "same-artifact-digest"
+  },
+  "privacy": {
+    "account_required": false,
+    "stable_device_identifier": false,
+    "hardware_identifier_in_discovery": false,
+    "seed_on_battery": false,
+    "seed_on_metered_network": false,
+    "peer_id_rotation": "per-swarm"
+  },
+  "cache": {
+    "root": "/var/cache/luigios/objects",
+    "content_addressed": true,
+    "service_user": "luigios-peer",
+    "scan_arbitrary_user_files": false
+  },
+  "integration": {
+    "package_updates": "pacman-full-transaction",
+    "pre_transaction_snapshot": "snapper",
+    "p2p_service": "opt-in",
+    "personal_sync_service": "user-opt-in-separate-process"
+  }
+}

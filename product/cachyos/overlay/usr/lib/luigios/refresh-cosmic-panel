@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_root="${XDG_STATE_HOME:-${HOME}/.local/state}/luigios-rice"
+stamp="${state_root}/panel-refreshed-v1"
+[[ ! -e "${stamp}" ]] || exit 0
+
+# COSMIC 1.4 may start its panel before the notifications service has claimed
+# org.freedesktop.Notifications. In that state the first panel process omits
+# applets and can fail to expose the configured dock. cosmic-session supervises
+# the process, so terminate it once after both dependencies are ready and let
+# the session restart it with a complete environment.
+panel_pid=
+ready=false
+for _ in $(seq 1 100); do
+    panel_pid=$(pgrep -o -x cosmic-panel || true)
+    if [[ -n "${panel_pid}" ]] &&
+        busctl --user --timeout=1 introspect \
+            org.freedesktop.Notifications \
+            /org/freedesktop/Notifications >/dev/null 2>&1
+    then
+        ready=true
+        break
+    fi
+    sleep 0.1
+done
+[[ "${ready}" == true ]] || {
+    echo "COSMIC panel dependencies did not become ready" >&2
+    exit 1
+}
+
+# The public bus object can answer just before cosmic-session has replaced the
+# private PANEL_NOTIFICATIONS_FD inherited by its first panel child.
+sleep 5
+kill -TERM "${panel_pid}"
+for _ in $(seq 1 100); do
+    replacement=$(pgrep -o -x cosmic-panel || true)
+    if [[ -n "${replacement}" && "${replacement}" != "${panel_pid}" ]]; then
+        install -d -m 0700 "${state_root}"
+        touch "${stamp}"
+        echo "COSMIC panel restarted after session services became ready."
+        exit 0
+    fi
+    sleep 0.1
+done
+
+echo "cosmic-session did not restart COSMIC panel" >&2
+exit 1

@@ -13,17 +13,47 @@ body:
     id: hardware
     attributes:
       label: Hardware inventory
-      description: Deck model, BIOS, storage, dock, display, controller, and connection type.
+      description: CPU, GPU, firmware, storage, display, network adapter, and connection type.
+    validations:
+      required: true
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Hardware relationship
+      description: This identifies test ownership and does not itself grant a support tier.
+      options:
+        - Community owner or tester
+        - Downstream maintainer
+        - Device vendor or OEM
+        - Core reference-device test
     validations:
       required: true
   - type: textarea
     id: results
     attributes:
       label: Test results
-      description: Include boot, suspend, desktop lifecycle, controller reconnect, dock, audio, update, and rollback.
+      description: Include boot, suspend, COSMIC, display, network, audio, development tools, update, and rollback.
     validations:
       required: true
   - type: textarea
     id: failures
     attributes:
       label: Failures and redacted evidence
+  - type: input
+    id: downstream
+    attributes:
+      label: Downstream or device project
+      description: Optional project, OEM, repair shop, or distribution name.
+  - type: input
+    id: support_url
+    attributes:
+      label: Public product or support URL
+      description: Optional link to publish with a verified compatibility entry.
+  - type: checkboxes
+    id: listing
+    attributes:
+      label: Compatibility listing
+      options:
+        - label: I want these results considered for the public compatibility list.
+        - label: I understand that a compatibility entry is evidence, not certification, warranty, or a core-project support promise.
+          required: true

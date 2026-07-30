@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "name": "LuigiOS",
+  "colors": {
+    "accent_bright": "#66FF66",
+    "accent_primary": "#22C55E",
+    "accent_deep": "#00B14B",
+    "surface_950": "#000000",
+    "surface_900": "#121416",
+    "surface_800": "#1A1A1A",
+    "surface_700": "#262626",
+    "text_primary": "#F5F7FA",
+    "text_secondary": "#C9D1D9",
+    "text_muted": "#9CA3AF",
+    "state_warning": "#FBBF24",
+    "state_error": "#EF4444",
+    "state_info": "#60A5FA"
+  },
+  "icon": {
+    "grid": 24,
+    "stroke": 2,
+    "linecap": "round",
+    "linejoin": "round"
+  },
+  "radii": {
+    "small": 6,
+    "medium": 8
+  },
+  "safe_area_px": {
+    "handheld": 48,
+    "television": 72
+  },
+  "typography": {
+    "display": ["Exo 2", "system-ui", "sans-serif"],
+    "ui": ["Inter", "system-ui", "sans-serif"],
+    "mono": ["JetBrains Mono", "ui-monospace", "monospace"]
+  }
+}

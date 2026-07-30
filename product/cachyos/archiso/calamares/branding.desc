@@ -1,0 +1,32 @@
+---
+componentName: luigios
+welcomeStyleCalamares: false
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 1100px,640px
+windowPlacement: center
+sidebar: widget,left
+navigation: widget
+
+strings:
+  productName: LuigiOS
+  shortProductName: LuigiOS
+  version: 0.1.0-dev.1
+  shortVersion: 0.1.0-dev.1
+  versionedName: LuigiOS 0.1.0-dev.1
+  shortVersionedName: LuigiOS 0.1.0-dev.1
+  bootloaderEntryName: LuigiOS
+
+images:
+  productLogo: logo.png
+  productIcon: icon.png
+  productWelcome: welcome.png
+
+style:
+  SidebarBackground: "#111713"
+  SidebarText: "#E8F2EA"
+  SidebarTextCurrent: "#071009"
+  SidebarBackgroundCurrent: "#65D46E"
+
+slideshow: show.qml
+slideshowAPI: 2

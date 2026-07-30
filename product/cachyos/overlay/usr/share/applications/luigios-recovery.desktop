@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=LuigiOS Recovery
+GenericName=System Recovery
+Comment=Safely upgrade, repair, or refresh LuigiOS
+Keywords=LuigiOS;Recovery;Repair;Upgrade;Fresh Start;Restore;
+Exec=/usr/bin/luigios-recovery
+Icon=luigios-recovery
+Terminal=false
+StartupNotify=true
+Categories=System;Settings;

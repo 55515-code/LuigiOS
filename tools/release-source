@@ -25,7 +25,7 @@ def build_release(output_dir, revision="HEAD", require_clean=True):
 
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     commit = git("rev-parse", revision).decode().strip()
-    name = f"batocera-deck-ux-{version}"
+    name = f"luigios-{version}"
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / f"{name}.tar.gz"
 

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 96" width="300" height="96" fill="none">
+  <title>LuigiOS</title>
+  <path d="M44 8 76 26v44L44 88 12 70V26Z" fill="#121416" stroke="#66FF66" stroke-width="5"/>
+  <path d="M33 29v35h27" stroke="#F5F7FA" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="33" cy="29" r="5" fill="#22C55E"/><circle cx="60" cy="64" r="5" fill="#22C55E"/>
+  <text x="94" y="63" fill="#F5F7FA" font-family="Exo 2,Inter,sans-serif" font-size="42" font-weight="700">Luigi<tspan fill="#22C55E">OS</tspan></text>
+</svg>

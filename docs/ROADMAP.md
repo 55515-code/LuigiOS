@@ -1,84 +1,50 @@
-# Production Roadmap
+# Roadmap
 
-Phases are gated in product-priority order. Peer infrastructure does not delay basic
-recovery, input, display, storage, and desktop reliability.
+## Qualification
 
-## Phase 0: Prototype stabilization
+- Completed: build and structurally inspect the first locked ISO.
+- Completed: clean offline VM installation, repeated cold boots, greeter login,
+  and complete COSMIC panel/dock validation.
+- Completed: guarded disposable-VM Btrfs Fresh Start, preservation, tamper
+  rejection, previous-root retention, and unchanged user-data verification.
+- Next: exercise full offline upgrades, package repair, Fresh Start cutover,
+  previous-root rollback, and recovery from UEFI live media.
+- Validate AMD, Intel, and NVIDIA graphics on representative hardware.
+- Exercise suspend, Bluetooth, Wi-Fi, audio, firmware updates, containers,
+  compilers, Code - OSS, and the complete COSMIC first-login experience.
 
-- Finish game/desktop lifecycle fault tests and controller hotplug tests.
-- Replace custom RunImage Steam with Batocera's supported Steam integration.
-- Remove unrestricted chroot sudo and broad host mounts from the shipping profile.
-- Reduce Plasma cold-start time and pin the desktop image/package set.
-- Turn every live script into a versioned package with install, migration, and uninstall.
+## Release
 
-## Phase 1: Reproducible product image
+- Rebuild twice from the same lock and compare extracted filesystem manifests.
+- Publish the ISO checksum, dependency lock, source revision, and QA report.
+- Document the intentional exceptions if container metadata prevents a
+  bit-identical outer ISO while file payloads remain identical.
 
-- Add a Steam Deck board/config fragment and pinned build container.
-- Produce deterministic artifacts, SBOM, license report, provenance, and checksums.
-- Run clean independent rebuild comparison in GitHub Actions/self-hosted builders.
-- Publish immutable candidate artifacts; no P2P installation yet.
+## SDK and contributor experience
 
-## Phase 2: Graphical appliance UX
+- Treat `tools/sdk` as a stable, documented product interface.
+- Add a guided `sdk init` workflow that creates a user-owned customization
+  project without modifying the LuigiOS source checkout.
+- Define declarative workstation profiles for packages, services, COSMIC
+  settings, terminal and editor defaults, and organization policy.
+- Add schema validation, dry-run plans, diffs, and rollback metadata before a
+  profile can touch a workstation or image.
+- Support rootless container and VM test deployments before host application.
+- Produce machine-readable build, deployment, and QA reports.
+- Provide templates and a one-command contributor check that match CI.
+- Keep image construction, host customization, and fleet deployment as
+  separate SDK surfaces sharing one profile model.
 
-- First Boot, Storage, Firmware Center, Library Import, Backup/Restore, Recovery,
-  Update/Rollback, Controller, Display, and Diagnostics screens.
-- Add Btrfs Restore Points after the managed subvolume migration and power-loss tests pass;
-  retain equivalent backup/restore workflows for ext4.
-- Expose privileged work through a narrow versioned broker, never GUI sudo.
-- Make every destructive action previewable, cancellable, and recoverable.
+## Transactional recovery
 
-## Phase 3: Trusted updates and rollback
-
-- TUF repository and threshold key ceremony.
-- Native A/B boot slots, boot-attempt counter, health commit, automatic fallback.
-- Stable/candidate/beta/testing promotion by digest and graphical rollback/reset.
-
-## Phase 4: Community P2P
-
-- Content-defined chunk store and HTTPS/OCI origins.
-- TUF-signed BitTorrent v2 metadata, web seeds, project tracker, quotas, privacy modes.
-- Opt-in seeding, battery/metered policy, cache garbage collection, revocation drills.
-- Benchmark BitTorrent-only discovery before approving a second IPFS/libp2p stack.
-- Prototype I2P only as an isolated opt-in privacy profile after the default path is stable.
-- Import recognized vanilla Batocera torrent state and verify cross-community seeding by
-  complete content identity without disturbing unknown personal torrents.
-
-## Phase 5: Product qualification
-
-- Hardware compatibility matrix and 100-cycle lifecycle/fault suites.
-- Suspend, dock/undock, TV power, Bluetooth reconnect, disk-full, interrupted update,
-  factory reset, and rollback qualification.
-- Secure Boot/measured-boot decision, threat model review, penetration test, support
-  policy, warranty/recovery documentation, release signing runbook, and legal review.
-
-## Later: Trusted Vaults
-
-- Controller-first mutual pairing and non-transitive per-vault grants using Syncthing.
-- Storage-only encrypted backups, recovery ceremony, revocation, and restore drills.
-- Static/private addressing first; evaluate I2P SAM only after isolated transport tests.
-- No public index, stranger discovery, public-update cache reuse, or anonymity promise.
-- Per-system and collection sharing derived from Batocera system definitions, with staged
-  hash verification, conflict preview, atomic library import, and declarative safe presets.
-
-## Stretch: Android application compatibility
-
-- Run a Waydroid feasibility spike on the product Wayland session, reusing its upstream LXC,
-  namespace, Binder, x86_64, AMD Mesa, full-screen, and application-integration design.
-- Package a pinned AOSP/LineageOS-compatible runtime through Buildroot integration rather than
-  installing a mutable second distribution or downloading executable setup scripts at runtime.
-- Add controller-first Android app discovery and launch entries, per-app control profiles,
-  touch mapping, OSK, audio, rotation, suspend/resume, and clean return to Gaming Mode.
-- Keep Android application data in a bounded user-data subvolume with graphical storage,
-  permission, backup, reset, runtime repair, and complete removal controls.
-- Qualify native x86/x86_64 apps first. Treat ARM translation, DRM, integrity attestation,
-  anti-cheat, camera, telephony, and location-dependent software as unsupported until proven.
-- Ship a functional FOSS/AOSP path without proprietary Google components. Investigate Android
-  CDD/CTS qualification and Google Mobile Services licensing as the only product path for a
-  preinstalled Play Store; do not redistribute Play Store or GMS outside applicable licenses.
-- If licensing is unavailable, permit a clearly unsupported expert workflow for user-provided
-  compatible images without project hosting, extraction, or circumvention of proprietary files.
-
-This goal remains behind image reproducibility, recovery, input/display reliability, and the
-security model. Waydroid's [official architecture](https://waydro.id/) confirms the relevant
-Wayland/container approach; Google's [Android compatibility program](https://source.android.com/docs/compatibility/overview)
-defines compatibility and GMS licensing as separate gates.
+- Implemented: one LuigiOS Recovery Center in the installed OS and live image.
+- Implemented: stage full upgrades through systemd's offline-update target with Snapper
+  pre/post restore points and Limine recovery entries.
+- Implemented: repair package and boot payloads from the signed, locked release repository.
+- Implemented: build Fresh Start roots from the permanent installation snapshot while
+  preserving user-data subvolumes in place.
+- Implemented and VM-tested: hash and verify preserved system settings before
+  any boot cutover.
+- Implemented and VM-tested: retain the previous root through cutover.
+- Next: qualify the new root through repeated cold-boot, login,
+  service, package, and user-data integrity checks.

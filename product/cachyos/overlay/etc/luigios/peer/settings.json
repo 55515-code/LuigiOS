@@ -1,0 +1,16 @@
+{
+  "download-dir": "/var/cache/luigios/objects",
+  "incomplete-dir": "/var/cache/luigios/objects/.incomplete",
+  "incomplete-dir-enabled": true,
+  "dht-enabled": false,
+  "pex-enabled": false,
+  "lpd-enabled": false,
+  "rpc-enabled": false,
+  "rpc-bind-address": "127.0.0.1",
+  "port-forwarding-enabled": false,
+  "ratio-limit-enabled": true,
+  "ratio-limit": 1.0,
+  "speed-limit-up-enabled": true,
+  "speed-limit-up": 1024,
+  "umask": 18
+}

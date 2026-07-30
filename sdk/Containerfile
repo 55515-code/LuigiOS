@@ -1,0 +1,18 @@
+FROM docker.io/library/archlinux@sha256:33c534be6c990710a878b37192904dd448e162ade06a201d95a80b42be2110c7
+
+RUN pacman -Syu --noconfirm --needed \
+        archiso \
+        git \
+        jq \
+        librsvg \
+        pacman-contrib \
+        python \
+        qemu-img \
+        qemu-system-x86 \
+        rsync \
+        squashfs-tools \
+        xorriso \
+    && pacman -Scc --noconfirm
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/qemu-system-x86_64"]

@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""LuigiOS Recovery Center.
+
+The GTK process remains unprivileged. Only an approved transaction is passed
+to the recovery engine through PolicyKit.
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import subprocess
+import sys
+import threading
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+
+
+ENGINE = "/usr/lib/luigios/recovery_engine.py"
+LIVE = "--live" in sys.argv or pathlib.Path("/run/archiso").exists()
+
+
+CSS = b"""
+window {
+  background: #0d1219;
+  color: #edf5ff;
+}
+.hero {
+  font-size: 30px;
+  font-weight: 800;
+}
+.subtitle {
+  color: #aab8ca;
+  font-size: 15px;
+}
+.recovery-card {
+  background: #151d28;
+  border: 1px solid #2b3b4f;
+  border-radius: 16px;
+  padding: 18px;
+}
+.recovery-card:hover {
+  border-color: #58d6a9;
+}
+.recommended {
+  background: #173329;
+  border-color: #58d6a9;
+}
+.danger-card {
+  border-color: #6a4750;
+}
+.card-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+.card-copy {
+  color: #b8c5d5;
+}
+.status-good {
+  color: #6fe0b5;
+  font-weight: 700;
+}
+.status-warning {
+  color: #ffcc78;
+  font-weight: 700;
+}
+"""
+
+
+class RecoveryWindow(Gtk.ApplicationWindow):
+    def __init__(self, application):
+        super().__init__(
+            application=application,
+            title="LuigiOS Setup & Recovery",
+            default_width=820,
+            default_height=700,
+        )
+        self.set_size_request(680, 560)
+        self.status = {}
+        self.targets = []
+        outer = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=18
+        )
+        outer.set_margin_top(28)
+        outer.set_margin_bottom(28)
+        outer.set_margin_start(36)
+        outer.set_margin_end(36)
+        self.set_child(outer)
+
+        title = Gtk.Label(
+            label="LuigiOS Setup & Recovery", xalign=0
+        )
+        title.add_css_class("hero")
+        outer.append(title)
+        subtitle = Gtk.Label(
+            label=(
+                "Install, repair, upgrade, or return to a clean system "
+                "without formatting user data."
+            ),
+            xalign=0,
+            wrap=True,
+        )
+        subtitle.add_css_class("subtitle")
+        outer.append(subtitle)
+
+        self.target_dropdown = None
+        if LIVE:
+            target_label = Gtk.Label(
+                label="Installed system", xalign=0
+            )
+            target_label.add_css_class("card-title")
+            outer.append(target_label)
+            self.target_dropdown = Gtk.DropDown.new_from_strings(
+                ["Authorize discovery to find installed LuigiOS systems"]
+            )
+            self.target_dropdown.set_sensitive(False)
+            self.target_dropdown.connect(
+                "notify::selected", self.target_changed
+            )
+            outer.append(self.target_dropdown)
+
+        self.status_label = Gtk.Label(
+            label="Inspecting recovery readiness…", xalign=0, wrap=True
+        )
+        outer.append(self.status_label)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        outer.append(scroller)
+        self.cards = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=14
+        )
+        scroller.set_child(self.cards)
+        self.populate_cards()
+        GLib.idle_add(self.refresh_status)
+
+    def card(self, title, copy, button, callback, style=None):
+        frame = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=8
+        )
+        frame.add_css_class("recovery-card")
+        if style:
+            frame.add_css_class(style)
+        heading = Gtk.Label(label=title, xalign=0)
+        heading.add_css_class("card-title")
+        frame.append(heading)
+        description = Gtk.Label(label=copy, xalign=0, wrap=True)
+        description.add_css_class("card-copy")
+        frame.append(description)
+        action = Gtk.Button(label=button, halign=Gtk.Align.END)
+        action.connect("clicked", callback)
+        frame.append(action)
+        self.cards.append(frame)
+        return action
+
+    def populate_cards(self):
+        if LIVE:
+            self.card(
+                "Install LuigiOS",
+                "Start a new guided installation. Formatting is available "
+                "only inside the explicit new-install partitioning flow.",
+                "Open installer",
+                self.open_installer,
+                "recommended",
+            )
+        else:
+            self.card(
+                "Safe Upgrade",
+                "Plan and pre-download one complete update, create a restore "
+                "point, then apply it in the quiet offline-update boot.",
+                "Plan upgrade",
+                lambda _button: self.plan("safe-upgrade"),
+                "recommended",
+            )
+        self.repair_button = self.card(
+            "Repair LuigiOS",
+            "Reinstall signed system payloads and rebuild boot files while "
+            "keeping accounts, user files, and configuration.",
+            "Plan repair",
+            lambda _button: self.plan("repair"),
+        )
+        self.fresh_button = self.card(
+            "Fresh Start",
+            "Create a clean root from the permanent installation restore "
+            "point. Home and persistent data stay in place; the previous "
+            "root remains bootable.",
+            "Plan Fresh Start",
+            lambda _button: self.plan("fresh-start"),
+            "danger-card",
+        )
+        self.card(
+            "Recovery report",
+            "Review filesystem boundaries, restore-point availability, and "
+            "any blockers without changing the system.",
+            "Show report",
+            lambda _button: self.show_json(
+                "Recovery readiness", self.status
+            ),
+        )
+
+    def run_json(self, arguments, *, privileged=False):
+        command = [ENGINE, *arguments]
+        if privileged:
+            command.insert(0, "pkexec")
+        result = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        stream = result.stdout if result.returncode == 0 else result.stderr
+        try:
+            value = json.loads(stream)
+        except json.JSONDecodeError:
+            value = {
+                "error": stream.strip() or "Recovery command failed",
+                "returncode": result.returncode,
+            }
+        return result.returncode, value
+
+    def refresh_status(self):
+        if LIVE:
+            self.status_label.set_label(
+                "Authorize read-only discovery of installed LuigiOS systems…"
+            )
+
+            def worker():
+                code, value = self.run_json(
+                    ["discover-targets"], privileged=True
+                )
+                GLib.idle_add(self.finish_live_discovery, code, value)
+
+            threading.Thread(target=worker, daemon=True).start()
+            return GLib.SOURCE_REMOVE
+        code, value = self.run_json(["status"])
+        self.display_status(code, value)
+        return GLib.SOURCE_REMOVE
+
+    def display_status(self, code, value):
+        self.status = value
+        self.status_label.remove_css_class("status-good")
+        self.status_label.remove_css_class("status-warning")
+        if code == 0:
+            if value.get("fresh_start_eligible"):
+                message = (
+                    "Ready: Btrfs data boundaries and the permanent "
+                    "installation restore point are available."
+                )
+                self.status_label.add_css_class("status-good")
+            else:
+                blockers = value.get("blockers", [])
+                message = "Recovery preflight: " + (
+                    "; ".join(blockers) if blockers else "limited"
+                )
+                self.status_label.add_css_class("status-warning")
+        else:
+            message = value.get("error", "Recovery inspection failed")
+            self.status_label.add_css_class("status-warning")
+        self.status_label.set_label(message)
+
+    def finish_live_discovery(self, code, value):
+        if code != 0:
+            self.targets = []
+            self.display_status(code, value)
+            self.fresh_button.set_sensitive(False)
+            self.repair_button.set_sensitive(False)
+            return GLib.SOURCE_REMOVE
+        self.targets = value.get("targets", [])
+        if not self.targets:
+            self.display_status(
+                1,
+                {
+                    "error": (
+                        "No installed LuigiOS Btrfs system was found. "
+                        "New installation remains available."
+                    ),
+                    "discovery_errors": value.get("errors", []),
+                },
+            )
+            self.fresh_button.set_sensitive(False)
+            self.repair_button.set_sensitive(False)
+            return GLib.SOURCE_REMOVE
+        labels = [
+            f"{target['device']} — {target['subvolume']}"
+            for target in self.targets
+        ]
+        self.target_dropdown.set_model(Gtk.StringList.new(labels))
+        preferred = next(
+            (
+                index
+                for index, target in enumerate(self.targets)
+                if target["status"].get("fresh_start_eligible")
+            ),
+            0,
+        )
+        self.target_dropdown.set_selected(preferred)
+        self.target_dropdown.set_sensitive(len(self.targets) > 1)
+        self.fresh_button.set_sensitive(True)
+        self.repair_button.set_sensitive(True)
+        self.target_changed()
+        return GLib.SOURCE_REMOVE
+
+    def target_changed(self, *_arguments):
+        target = self.selected_target()
+        if target:
+            self.display_status(0, target["status"])
+
+    def selected_target(self):
+        if not LIVE or not self.targets:
+            return None
+        selected = self.target_dropdown.get_selected()
+        if selected >= len(self.targets):
+            return None
+        return self.targets[selected]
+
+    def target_arguments(self):
+        target = self.selected_target()
+        if not target:
+            raise RuntimeError("No installed LuigiOS system is selected")
+        return [
+            "--device",
+            target["device"],
+            "--subvolume",
+            target["subvolume"],
+        ]
+
+    def open_installer(self, _button):
+        subprocess.Popen(
+            [
+                "/usr/local/bin/pkexec-wrapper",
+                "/usr/local/libexec/luigios-calamares",
+            ]
+        )
+
+    def plan(self, action):
+        arguments = ["plan", action]
+        privileged = False
+        if LIVE:
+            try:
+                arguments.extend(self.target_arguments())
+            except RuntimeError as error:
+                self.show_json("Select an installed system", {"error": str(error)})
+                return
+            privileged = True
+        code, value = self.run_json(arguments, privileged=privileged)
+        if code != 0:
+            self.show_json("Unable to create plan", value)
+            return
+        self.show_plan(value)
+
+    def show_plan(self, plan):
+        lines = [f"Action: {plan['action']}", ""]
+        lines.extend(f"• {step}" for step in plan["steps"])
+        lines.extend(
+            [
+                "",
+                "Storage formatting: never",
+                "Previous root deleted: never",
+            ]
+        )
+        if plan["blockers"]:
+            lines.extend(["", "Blocked:"])
+            lines.extend(f"• {item}" for item in plan["blockers"])
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text="Transaction plan",
+            secondary_text="\n".join(lines),
+        )
+        if plan["executable"]:
+            dialog.add_button("Authorize and continue", Gtk.ResponseType.OK)
+            dialog.connect("response", self.plan_response, plan)
+        else:
+            dialog.connect("response", lambda window, _response: window.close())
+        dialog.present()
+
+    def plan_response(self, dialog, response, plan):
+        dialog.close()
+        if response != Gtk.ResponseType.OK:
+            return
+        operation = {
+            "safe-upgrade": "stage-upgrade",
+            "repair": "repair",
+            "fresh-start": "fresh-start",
+        }[plan["action"]]
+        self.run_privileged(operation)
+
+    def run_privileged(self, operation):
+        target_arguments = []
+        if LIVE:
+            try:
+                target_arguments = self.target_arguments()
+            except RuntimeError as error:
+                self.show_json(
+                    "Select an installed system", {"error": str(error)}
+                )
+                return
+        progress = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            buttons=Gtk.ButtonsType.NONE,
+            text="LuigiOS recovery is working",
+            secondary_text=(
+                "The previous root and user-data subvolumes remain protected. "
+                "Do not power off this computer."
+            ),
+        )
+        progress.present()
+
+        def worker():
+            arguments = [
+                "pkexec",
+                ENGINE,
+                operation,
+                *target_arguments,
+            ]
+            result = subprocess.run(
+                arguments,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            output = result.stdout if result.returncode == 0 else result.stderr
+            try:
+                value = json.loads(output)
+            except json.JSONDecodeError:
+                value = {
+                    "error": output.strip() or "Recovery operation failed"
+                }
+            GLib.idle_add(finished, result.returncode, value)
+
+        def finished(code, value):
+            progress.close()
+            self.show_json(
+                "Recovery transaction completed"
+                if code == 0
+                else "Recovery transaction stopped safely",
+                value,
+            )
+            self.refresh_status()
+            return GLib.SOURCE_REMOVE
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_json(self, title, value):
+        text = json.dumps(value, indent=2, sort_keys=True)
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=title,
+            secondary_text=text,
+        )
+        dialog.connect("response", lambda window, _response: window.close())
+        dialog.present()
+
+
+class RecoveryApplication(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="io.luigios.Recovery")
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            self.props.active_window.get_display()
+            if self.props.active_window
+            else Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        window = self.props.active_window or RecoveryWindow(self)
+        window.present()
+
+
+if __name__ == "__main__":
+    raise SystemExit(RecoveryApplication().run(sys.argv))

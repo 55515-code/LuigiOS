@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=LuigiOS Setup & Recovery
+GenericName=System Setup
+Comment=Install or recover LuigiOS without risking user data
+Keywords=LuigiOS;Install;Installer;Recovery;Repair;Fresh Start;System;
+Exec=/usr/bin/luigios-recovery --live
+Icon=luigios-recovery
+Terminal=false
+StartupNotify=true
+Categories=System;Settings;

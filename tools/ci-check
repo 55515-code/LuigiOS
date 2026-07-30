@@ -1,28 +1,23 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-cd "$root"
+root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "${root}"
 
-python3 -m unittest discover -s tests -v
-python3 -m py_compile third_party/bua/bua_installerx86.py
+python -m unittest discover -s tests -v
+./tools/package-lock validate
+./tools/validate-product
 
-find prototype -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
-sh -n prototype/desktop/desktop
-sh -n product/package/batocera-deck-bua/files/bua
-sh -n product/package/batocera-deck-bua/files/bua-port.sh
-find prototype/services -type f -print0 | xargs -0 -r -n1 sh -n
 bash -n tools/sdk
-python3 -m py_compile tools/check-dco
-python3 -m py_compile tools/update-credits
-python3 -m py_compile tools/release-source
-./tools/update-credits --check
-
-cc -Wall -Wextra -Werror \
-    $(sdl2-config --cflags) \
-    prototype/desktop/plasma-gamepad-bridge.c \
-    $(sdl2-config --libs) -lm \
-    -o /tmp/plasma-gamepad-bridge-ci
+bash -n branding/cosmic-rice/apply-user.sh
+bash -n branding/cosmic-rice/apply-system.sh
+bash -n product/cachyos/overlay/usr/lib/luigios/firstboot
+python -m py_compile tools/package-lock tools/check-dco tools/release-source \
+    tools/update-credits tools/recovery-sim \
+    tools/qa/recovery-btrfs-vm \
+    product/cachyos/overlay/usr/lib/luigios/recovery_engine.py
+bash -n tools/qa/run-recovery-btrfs-vm
+./tools/recovery-sim >/dev/null
 
 git diff --check
 git diff --cached --check

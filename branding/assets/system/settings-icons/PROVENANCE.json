@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "generator": "tools/render-brand-assets",
+  "license": "CC-BY-SA-4.0",
+  "files": {
+    "controller.svg": "4d99e37854d1bef42c3fb8411de48d01953a4ead1d74906ce09fb62565d27608",
+    "network.svg": "75646161ea99eb00486e4c3b5aeea5e2fead4f9919c33b633b8267e0acbf04b1",
+    "recovery.svg": "b9ee43e39d3a8241159bf73899d2eefb681f11e010aab29314ff256df2051914",
+    "settings.svg": "c22e4a773189ad1fa0f5507ab11b2eaf19cdc7b659b49b8739fcc843634d0698",
+    "storage.svg": "d100c04ba32f4026469f008d847a21f34cb0a8d2bb40caa1dcb0560a93d7be45",
+    "update.svg": "5333174421b135e6dd1ecd8c7f2dcef9107d6a00c8174c2e69cbba4654443841"
+  }
+}
