@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "luigios",
   "name": "LuigiOS",
-  "version": "0.1.0-dev.1",
+  "version": "0.2.0-dev.1",
   "base": {
     "distribution": "CachyOS",
     "architecture": "x86_64",

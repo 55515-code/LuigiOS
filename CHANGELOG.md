@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-dev.1
+## 0.2.0-dev.1
 
 - Rebased LuigiOS on a pinned official CachyOS Live ISO revision and Archiso.
 - Made COSMIC the exclusive desktop with `cosmic-greeter`.
