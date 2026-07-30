@@ -29,6 +29,13 @@
     "compiler_cache": "sccache",
     "linker": "mold"
   },
+  "sdk": {
+    "defining_feature": true,
+    "entrypoint": "tools/sdk",
+    "rootless_first": true,
+    "reproducible_release_workflow": true,
+    "stretch_goal": "workstation-customization-and-deployment"
+  },
   "decentralized_networking": {
     "defining_feature": true,
     "release_authority": "tuf",

@@ -4,13 +4,29 @@ set -euo pipefail
 installer=/usr/share/luigios/calamares
 install -Dm0644 /usr/share/luigios/os-release /usr/lib/os-release
 ln -sfn ../usr/lib/os-release /etc/os-release
+
+# Calamares is LuigiOS' single provisioning flow. COSMIC Initial Setup derives
+# its language list from generated locales (`locale -a`), which is intentionally
+# minimal in the live image, and duplicates the installer account/locale pages.
+# Suppress that package autostart and launch the branded installer directly.
+cat >/etc/xdg/autostart/com.system76.CosmicInitialSetup.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=COSMIC Initial Setup
+Hidden=true
+EOF
+install -Dm0644 /usr/share/applications/luigios-installer.desktop \
+    /etc/xdg/autostart/luigios-installer.desktop
+
 install -Dm0644 "${installer}/settings_online.conf" \
     /usr/share/calamares/settings_online.conf
 for module in \
     pacstrap.conf \
     partition.conf \
     services-systemd.conf \
+    shellprocess_finalize_target.conf \
     shellprocess_initialize_pacman.conf \
+    shellprocess_limine_initramfs.conf \
     shellprocess_luigios.conf
 do
     install -Dm0644 "${installer}/${module}" \
@@ -18,7 +34,24 @@ do
 done
 
 # LuigiOS supports one installer path and one bootloader. Avoid the redundant
-# single-item package chooser and make the installed Limine identity explicit.
+# single-item package chooser, teach CachyOS' pacstrap module to consume the
+# explicit profile setting, and make the installed Limine identity explicit.
+pacstrap_module=/usr/lib/calamares/modules/pacstrap/main.py
+python - "${pacstrap_module}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+old = 'bootloader = libcalamares.globalstorage.value("packagechooser_bootloader")'
+new = (
+    'bootloader = (libcalamares.job.configuration.get("bootloader") or '
+    'libcalamares.globalstorage.value("packagechooser_bootloader"))'
+)
+if source.count(old) != 1:
+    raise SystemExit(f"unexpected CachyOS pacstrap bootloader API in {path}")
+path.write_text(source.replace(old, new))
+PY
 sed -i \
     -e 's/efiBootloaderId: "cachyos"/efiBootloaderId: "luigios"/' \
     -e 's#limineSplashLogo: .*#limineSplashLogo: "/usr/share/luigios/branding/assets/boot/boot-logo-1280x800.png"#' \

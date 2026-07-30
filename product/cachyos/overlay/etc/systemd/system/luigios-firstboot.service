@@ -5,7 +5,7 @@ ConditionPathExists=!/var/lib/luigios/firstboot-v1
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/luigios/firstboot
+ExecStart=/usr/bin/bash /usr/lib/luigios/firstboot
 RemainAfterExit=yes
 
 [Install]

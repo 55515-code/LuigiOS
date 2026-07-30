@@ -61,3 +61,23 @@ Arch cloud image are digest/checksum pinned. Tune guest resources with
   LuigiOS visual system under `branding/cosmic-rice`.
 
 Run `./tools/ci-check` before submitting a change.
+
+## SDK and contributions
+
+The SDK is a defining LuigiOS feature alongside decentralized networking.
+Today, [`tools/sdk`](tools/sdk) provides the reproducible source, lock, cache,
+profile, image, and inspection workflow. The contributor-facing contract and
+the non-duplicative customization/deployment stretch plan are documented in
+[`docs/SDK.md`](docs/SDK.md).
+
+A contributor can validate a checkout without host-root access:
+
+```sh
+./tools/sdk doctor
+./tools/sdk validate
+./tools/ci-check
+```
+
+Release image assembly uses the rootless VM builder described above. Proposed
+workstation profiles must support validation and dry-run review before they are
+allowed to change a host.

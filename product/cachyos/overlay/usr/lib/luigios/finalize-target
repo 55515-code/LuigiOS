@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target=${1:?target root is required}
+boot_mount="${target}/boot"
+[[ -d "${target}/etc" && -f "${boot_mount}/limine.conf" ]] || {
+    echo "invalid LuigiOS target: ${target}" >&2
+    exit 1
+}
+[[ -x "${target}/usr/lib/luigios/cosmic-greeter-start" ]] || {
+    echo "installed COSMIC greeter launcher is not executable" >&2
+    exit 1
+}
+
+seed_target_users() {
+    local account uid gid home shell target_home seeded=0
+    while IFS=: read -r account _ uid gid _ home shell; do
+        (( uid >= 1000 && uid < 60000 )) || continue
+        [[ "${home}" == /* && "${home}" != / && "${shell}" != */nologin ]] ||
+            continue
+        target_home="${target}${home}"
+        if [[ ! -d "${target_home}" ]]; then
+            install -d -m 0750 -o "${uid}" -g "${gid}" "${target_home}"
+        fi
+        chroot "${target}" /usr/bin/runuser -u "${account}" -- env \
+            HOME="${home}" \
+            USER="${account}" \
+            LOGNAME="${account}" \
+            XDG_CONFIG_HOME="${home}/.config" \
+            XDG_DATA_HOME="${home}/.local/share" \
+            XDG_STATE_HOME="${home}/.local/state" \
+            /usr/bin/bash /usr/share/luigios/cosmic-rice/apply-user.sh
+        [[ -f "${target_home}/.local/state/luigios-rice/applied-v1" ]] || {
+            echo "LuigiOS user defaults were not seeded for ${account}" >&2
+            return 1
+        }
+        grep -q '"Panel"' \
+            "${target_home}/.config/cosmic/com.system76.CosmicPanel/v1/entries"
+        grep -q '"Dock"' \
+            "${target_home}/.config/cosmic/com.system76.CosmicPanel/v1/entries"
+        seeded=$((seeded + 1))
+    done <"${target}/etc/passwd"
+    (( seeded > 0 )) || {
+        echo "no regular installed user was available for LuigiOS defaults" >&2
+        return 1
+    }
+    echo "Seeded LuigiOS COSMIC defaults for ${seeded} installed user(s)."
+}
+
+esp_source=$(findmnt -n -o SOURCE --target "${boot_mount}")
+esp_fstype=$(findmnt -n -o FSTYPE --target "${boot_mount}")
+[[ -n "${esp_source}" && "${esp_fstype}" == vfat ]] || {
+    echo "target ESP is not a mounted FAT filesystem: ${boot_mount}" >&2
+    exit 1
+}
+
+verify_limine_payloads() {
+    local spec relative expected actual
+    while IFS= read -r spec; do
+        [[ "${spec}" == boot\(\):/*\#* ]] || continue
+        relative=${spec#boot():/}
+        expected=${relative#*#}
+        relative=${relative%%#*}
+        [[ -f "${boot_mount}/${relative}" ]] || {
+            echo "missing Limine payload: ${relative}" >&2
+            return 1
+        }
+        actual=$(b2sum "${boot_mount}/${relative}")
+        actual=${actual%% *}
+        [[ "${actual}" == "${expected}" ]] || {
+            echo "Limine payload hash mismatch: ${relative}" >&2
+            return 1
+        }
+    done < <(
+        awk '$1 == "path:" || $1 == "module_path:" { print $2 }' \
+            "${boot_mount}/limine.conf"
+    )
+}
+
+seed_target_users
+verify_limine_payloads
+sync -f "${boot_mount}"
+
+# Close and reopen the ESP once after all boot assets have been generated.
+# This commits FAT metadata through the same boundary firmware will observe,
+# then checks the unmounted filesystem before Calamares performs its final
+# recursive unmount.
+umount "${boot_mount}"
+remount_esp() {
+    mountpoint -q "${boot_mount}" || mount "${esp_source}" "${boot_mount}"
+}
+trap remount_esp EXIT
+set +e
+fsck.fat -a "${esp_source}"
+fsck_status=$?
+set -e
+(( fsck_status < 2 )) || {
+    echo "ESP filesystem check failed with status ${fsck_status}" >&2
+    exit "${fsck_status}"
+}
+mount "${esp_source}" "${boot_mount}"
+trap - EXIT
+
+verify_limine_payloads
+sync -f "${boot_mount}"
+echo "LuigiOS target and ESP finalized successfully."

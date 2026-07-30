@@ -100,6 +100,8 @@ prepare() {
         "${bundle}/pacman.conf"
     install -d "${bundle}/target-root"
     rsync -a "${ROOT}/product/cachyos/overlay/" "${bundle}/target-root/"
+    rsync -a "${ROOT}/product/cachyos/target-overlay/" \
+        "${bundle}/target-root/"
 
     calamares="${ROOT}/product/cachyos/archiso/calamares"
     installer_bundle="${bundle}/calamares"
@@ -112,6 +114,10 @@ prepare() {
         "${installer_bundle}/shellprocess_luigios.conf"
     install -m 0644 "${calamares}/shellprocess_initialize_pacman.conf" \
         "${installer_bundle}/shellprocess_initialize_pacman.conf"
+    install -m 0644 "${calamares}/shellprocess_limine_initramfs.conf" \
+        "${installer_bundle}/shellprocess_limine_initramfs.conf"
+    install -m 0644 "${calamares}/shellprocess_finalize_target.conf" \
+        "${installer_bundle}/shellprocess_finalize_target.conf"
     install -m 0644 "${calamares}/services-systemd.conf" \
         "${installer_bundle}/services-systemd.conf"
     install -m 0644 "${calamares}/partition.conf" \
@@ -141,7 +147,7 @@ prepare() {
         "${branding}/welcome.png"
 
     {
-        printf '%s\n' '---' 'basePackages:'
+        printf '%s\n' '---' 'bootloader: limine' 'basePackages:'
         sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
             awk 'NF { print "  - " $1 }'
         cat <<'EOF'
@@ -161,11 +167,14 @@ EOF
 
     install -d "${PROFILE}/airootfs/etc/systemd/system" \
         "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants" \
-        "${PROFILE}/airootfs/etc/systemd/user/default.target.wants"
+        "${PROFILE}/airootfs/etc/systemd/user/graphical-session-pre.target.wants" \
+        "${PROFILE}/airootfs/etc/systemd/user/graphical-session.target.wants"
     ln -sfn /usr/lib/systemd/system/cosmic-greeter.service \
         "${PROFILE}/airootfs/etc/systemd/system/display-manager.service"
     ln -sfn /usr/lib/systemd/user/luigios-first-login.service \
-        "${PROFILE}/airootfs/etc/systemd/user/default.target.wants/luigios-first-login.service"
+        "${PROFILE}/airootfs/etc/systemd/user/graphical-session-pre.target.wants/luigios-first-login.service"
+    ln -sfn /usr/lib/systemd/user/luigios-panel-refresh.service \
+        "${PROFILE}/airootfs/etc/systemd/user/graphical-session.target.wants/luigios-panel-refresh.service"
     ln -sfn /usr/lib/systemd/system/luigios-firstboot.service \
         "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/luigios-firstboot.service"
     rm -f \
@@ -234,28 +243,28 @@ Server = file://${CACHE}
 EOF
     mv "${PROFILE}/pacman.conf.locked" "${PROFILE}/pacman.conf"
 
-    live_cache="${PROFILE}/airootfs/var/cache/pacman/pkg"
-    rm -rf "${live_cache}"
-    install -d "${live_cache}"
+    live_repo="${PROFILE}/airootfs/usr/share/luigios/repo"
+    rm -rf "${live_repo}"
+    install -d "${live_repo}"
     mapfile -t package_filenames < <(
         jq -r '.packages[].filename' "${ROOT}/sdk/package-lock.json"
     )
     for filename in "${package_filenames[@]}"; do
-        cp -al "${CACHE}/${filename}" "${live_cache}/"
+        cp -al "${CACHE}/${filename}" "${live_repo}/"
         if [[ -f "${CACHE}/${filename}.sig" ]]; then
-            cp -al "${CACHE}/${filename}.sig" "${live_cache}/"
+            cp -al "${CACHE}/${filename}.sig" "${live_repo}/"
         fi
     done
     install -m 0644 "${CACHE}/luigios-lock.db.tar.zst" \
-        "${live_cache}/luigios-lock.db.tar.zst"
+        "${live_repo}/luigios-lock.db.tar.zst"
+    ln -s luigios-lock.db.tar.zst "${live_repo}/luigios-lock.db"
     {
         sed -n '1,/^\[cachyos-v3\]$/{
             /^\[cachyos-v3\]$/q
             p
         }' "${ROOT}/product/cachyos/pacman.conf"
         printf '\n[luigios-lock]\nSigLevel = Required DatabaseOptional\n'
-        printf 'Server = file:///var/cache/pacman/pkg\n\n'
-        sed -n '/^\[cachyos-v3\]$/,$p' "${ROOT}/product/cachyos/pacman.conf"
+        printf 'Server = file:///usr/share/luigios/repo\n\n'
     } >"${PROFILE}/airootfs/etc/pacman.conf"
     install -m 0644 "${PROFILE}/airootfs/etc/pacman.conf" \
         "${PROFILE}/airootfs/etc/pacman-more.conf"

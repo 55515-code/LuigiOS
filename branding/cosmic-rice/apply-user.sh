@@ -2,6 +2,34 @@
 set -euo pipefail
 
 rice_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ${1:-} == --seed-all-users ]]; then
+    if [[ ${EUID} -ne 0 ]]; then
+        echo "--seed-all-users must run as root" >&2
+        exit 1
+    fi
+    while IFS=: read -r account _ uid gid _ home shell; do
+        (( uid >= 1000 && uid < 60000 )) || continue
+        [[ "${home}" == /* && "${home}" != / && "${shell}" != */nologin ]] ||
+            continue
+        # Calamares records the account before every backend guarantees that
+        # its home directory has been materialized. Make the seed independent
+        # of that timing so COSMIC sees its complete panel registry before the
+        # first graphical session starts.
+        if [[ ! -d "${home}" ]]; then
+            install -d -m 0750 -o "${uid}" -g "${gid}" "${home}"
+        fi
+        runuser -u "${account}" -- env \
+            HOME="${home}" \
+            USER="${account}" \
+            LOGNAME="${account}" \
+            XDG_CONFIG_HOME="${home}/.config" \
+            XDG_DATA_HOME="${home}/.local/share" \
+            XDG_STATE_HOME="${home}/.local/state" \
+            /usr/bin/bash "${rice_dir}/apply-user.sh"
+    done </etc/passwd
+    exit 0
+fi
+
 if [[ -d "${rice_dir}/../branding/assets" ]]; then
     bundle_root="$(cd -- "${rice_dir}/.." && pwd)"
 else
@@ -150,6 +178,13 @@ write_cosmic com.system76.CosmicBackground all \
 )"
 write_cosmic com.system76.CosmicBackground same-on-all "true"
 
+# COSMIC creates this registry during the first session if it is absent, but
+# the running panel only instantiates the entries it saw at process startup.
+# Seed both shells so the LuigiOS dock is present on the very first login.
+write_cosmic com.system76.CosmicPanel entries '[
+    "Panel",
+    "Dock",
+]'
 write_cosmic com.system76.CosmicPanel.Panel anchor_gap "true"
 write_cosmic com.system76.CosmicPanel.Panel expand_to_edges "false"
 write_cosmic com.system76.CosmicPanel.Panel border_radius "12"

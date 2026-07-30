@@ -116,6 +116,7 @@ age
 git
 github-cli
 code
+python-toml
 rustup
 mold
 sccache

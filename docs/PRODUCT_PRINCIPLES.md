@@ -12,3 +12,7 @@
    product feature.
 7. Professional identity. Branding spans boot through daily applications and
    remains accessible, legible, and restrained.
+8. An inviting OS SDK. Building, validating, customizing, and deploying
+   LuigiOS should be discoverable, rootless-first, reviewable, and pleasant for
+   a first-time contributor. The SDK and decentralized networking are defining
+   project features, not maintainer-only implementation details.

@@ -38,5 +38,5 @@ ufw default allow outgoing
 ufw logging low
 ufw --force enable
 
-/usr/share/luigios/cosmic-rice/apply-system.sh
+bash /usr/share/luigios/cosmic-rice/apply-system.sh
 touch /var/lib/luigios/firstboot-v1

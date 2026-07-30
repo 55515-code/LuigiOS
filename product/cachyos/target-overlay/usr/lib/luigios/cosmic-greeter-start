@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+# greetd's PAM session may sanitize the daemon's inherited environment. Load
+# the locale at the final process boundary so COSMIC's language requester sees
+# exactly what Calamares committed for the installed system.
+if [ -r /etc/locale.conf ]; then
+    set -a
+    # locale.conf is a shell-compatible KEY=VALUE file written by localectl.
+    . /etc/locale.conf
+    set +a
+fi
+
+exec /usr/bin/cosmic-greeter-start
