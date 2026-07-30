@@ -86,3 +86,6 @@ podman run --rm \
 }
 jq -e '.passed == true' "${report}" >/dev/null
 cat "${report}"
+if [[ "${LUIGIOS_KEEP_SUCCESSFUL_QA_DISKS:-0}" != 1 ]]; then
+    find "${qa_dir}" -depth -delete
+fi
