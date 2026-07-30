@@ -11,10 +11,10 @@ navigation: widget
 strings:
   productName: LuigiOS
   shortProductName: LuigiOS
-  version: 0.1.0-dev.1
-  shortVersion: 0.1.0-dev.1
-  versionedName: LuigiOS 0.1.0-dev.1
-  shortVersionedName: LuigiOS 0.1.0-dev.1
+  version: 0.2.0-dev.1
+  shortVersion: 0.2.0-dev.1
+  versionedName: LuigiOS 0.2.0-dev.1
+  shortVersionedName: LuigiOS 0.2.0-dev.1
   bootloaderEntryName: LuigiOS
 
 images:
