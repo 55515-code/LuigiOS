@@ -12,5 +12,10 @@
   opt-in confined peer delivery, HTTPS/OCI fallbacks, SLSA provenance, Sigstore
   verification, and SPDX SBOM generation.
 - Added a complete LuigiOS rice for boot, COSMIC, terminal, icons, and Code - OSS.
+- Added one Setup & Recovery experience for installation, full offline
+  upgrades, package repair, and data-preserving Fresh Start.
+- Added a machine-readable recovery policy, permanent installation restore
+  point, PolicyKit boundary, preservation manifests, tamper detection, and
+  guarded rootless/disposable-VM recovery qualification.
 - Removed the former entertainment-oriented platform, compatibility packages,
   prototypes, profiles, assets, and tests.

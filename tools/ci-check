@@ -13,7 +13,11 @@ bash -n branding/cosmic-rice/apply-user.sh
 bash -n branding/cosmic-rice/apply-system.sh
 bash -n product/cachyos/overlay/usr/lib/luigios/firstboot
 python -m py_compile tools/package-lock tools/check-dco tools/release-source \
-    tools/update-credits
+    tools/update-credits tools/recovery-sim \
+    tools/qa/recovery-btrfs-vm \
+    product/cachyos/overlay/usr/lib/luigios/recovery_engine.py
+bash -n tools/qa/run-recovery-btrfs-vm
+./tools/recovery-sim >/dev/null
 
 git diff --check
 git diff --cached --check

@@ -2,9 +2,13 @@
 
 ## Qualification
 
-- Build the first locked ISO from a clean CachyOS workstation.
-- Boot-test UEFI and legacy paths in virtual machines.
-- Install to Btrfs and verify rollback after an interrupted package transaction.
+- Completed: build and structurally inspect the first locked ISO.
+- Completed: clean offline VM installation, repeated cold boots, greeter login,
+  and complete COSMIC panel/dock validation.
+- Completed: guarded disposable-VM Btrfs Fresh Start, preservation, tamper
+  rejection, previous-root retention, and unchanged user-data verification.
+- Next: exercise full offline upgrades, package repair, Fresh Start cutover,
+  previous-root rollback, and recovery from UEFI live media.
 - Validate AMD, Intel, and NVIDIA graphics on representative hardware.
 - Exercise suspend, Bluetooth, Wi-Fi, audio, firmware updates, containers,
   compilers, Code - OSS, and the complete COSMIC first-login experience.
@@ -30,3 +34,17 @@
 - Provide templates and a one-command contributor check that match CI.
 - Keep image construction, host customization, and fleet deployment as
   separate SDK surfaces sharing one profile model.
+
+## Transactional recovery
+
+- Implemented: one LuigiOS Recovery Center in the installed OS and live image.
+- Implemented: stage full upgrades through systemd's offline-update target with Snapper
+  pre/post restore points and Limine recovery entries.
+- Implemented: repair package and boot payloads from the signed, locked release repository.
+- Implemented: build Fresh Start roots from the permanent installation snapshot while
+  preserving user-data subvolumes in place.
+- Implemented and VM-tested: hash and verify preserved system settings before
+  any boot cutover.
+- Implemented and VM-tested: retain the previous root through cutover.
+- Next: qualify the new root through repeated cold-boot, login,
+  service, package, and user-data integrity checks.

@@ -11,6 +11,17 @@ are derived from a pinned revision of the official CachyOS Live ISO project;
 the complete pacman dependency closure and every package checksum are recorded
 in `sdk/package-lock.json`.
 
+## Current status
+
+LuigiOS is an early VM-beta project, not a general end-user release. The
+current source produces a locked CachyOS/COSMIC image and has passed clean
+offline installation, repeated cold boot and login, product-contract tests,
+and guarded Btrfs recovery testing in disposable virtual machines.
+
+Physical hardware support is not yet qualified. Use non-critical hardware or a
+disposable VM, keep an independently verified backup, and report results in
+the [hardware qualification tracker][qualification].
+
 ## Build
 
 ```sh
@@ -62,6 +73,13 @@ Arch cloud image are digest/checksum pinned. Tune guest resources with
 
 Run `./tools/ci-check` before submitting a change.
 
+Recovery, safe upgrades, and the data-preserving Fresh Start contract are
+documented in [`docs/RECOVERY.md`](docs/RECOVERY.md). These workflows never
+format an installed system. Preservation, tamper rejection, Btrfs root
+cutover, and unchanged persistent-subvolume identity have passed the guarded
+disposable-VM test; physical-machine recovery remains blocked on the remaining
+UEFI and hardware qualification gates.
+
 ## SDK and contributions
 
 The SDK is a defining LuigiOS feature alongside decentralized networking.
@@ -81,3 +99,20 @@ A contributor can validate a checkout without host-root access:
 Release image assembly uses the rootless VM builder described above. Proposed
 workstation profiles must support validation and dry-run review before they are
 allowed to change a host.
+
+## Community
+
+- Coordinate development and testing in the [LuigiOS Discord][discord].
+- Claim a focused contribution lane in the [qualification tracker][qualification].
+- Use [GitHub Discussions][discussions] for proposals and longer-form community
+  conversations.
+- Read [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md),
+  and [`SECURITY.md`](SECURITY.md) before participating.
+
+LuigiOS welcomes developers, testers, technical writers, designers, and
+accessibility contributors. The project does not distribute games, console
+firmware, BIOS files, keys, or other proprietary payloads.
+
+[discord]: https://discord.gg/BDfCJPUeVG
+[discussions]: https://github.com/55515-code/LuigiOS/discussions
+[qualification]: https://github.com/55515-code/LuigiOS/issues/12

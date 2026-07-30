@@ -394,8 +394,9 @@ class ProductContract(unittest.TestCase):
         installer_entry = (
             ROOT / "product/cachyos/archiso/luigios-installer.desktop"
         ).read_text()
-        self.assertIn("Name=Install LuigiOS", installer_entry)
-        self.assertIn("Icon=luigios-installer", installer_entry)
+        self.assertIn("Name=LuigiOS Setup & Recovery", installer_entry)
+        self.assertIn("Exec=/usr/bin/luigios-recovery --live", installer_entry)
+        self.assertIn("Icon=luigios-recovery", installer_entry)
         launcher = (
             ROOT
             / "product/cachyos/archiso/calamares/calamares-online.sh"

@@ -12,6 +12,6 @@ Before sending a change:
 5. Prefer memory-safe implementations for new privileged or network-facing code.
 6. Run `./tools/ci-check` and include hardware validation for relevant changes.
 
-Use signed commits and follow the Developer Certificate of Origin in `DCO.md`.
+Use signed commits and follow the Developer Certificate of Origin in `DCO`.
 Do not add a second desktop, partial-upgrade workflow, unpinned release input, or
 network daemon enabled without a documented threat model.

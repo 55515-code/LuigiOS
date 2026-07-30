@@ -21,9 +21,11 @@ install -Dm0644 /usr/share/applications/luigios-installer.desktop \
 install -Dm0644 "${installer}/settings_online.conf" \
     /usr/share/calamares/settings_online.conf
 for module in \
+    mount.conf \
     pacstrap.conf \
     partition.conf \
     services-systemd.conf \
+    shellprocess_btrfs_snapshot.conf \
     shellprocess_finalize_target.conf \
     shellprocess_initialize_pacman.conf \
     shellprocess_limine_initramfs.conf \
@@ -32,6 +34,8 @@ do
     install -Dm0644 "${installer}/${module}" \
         "/etc/calamares/modules/${module}"
 done
+install -Dm0755 "${installer}/btrfs-installation-snapshot" \
+    /etc/calamares/scripts/btrfs-installation-snapshot
 
 # LuigiOS supports one installer path and one bootloader. Avoid the redundant
 # single-item package chooser, teach CachyOS' pacstrap module to consume the

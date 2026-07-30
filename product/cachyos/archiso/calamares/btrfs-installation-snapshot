@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+findmnt -n -t btrfs --target / >/dev/null || {
+    echo "LuigiOS Fresh Start requires a Btrfs root" >&2
+    exit 1
+}
+snapper --no-dbus -c root list-configs | grep -qE '(^|[[:space:]])root([[:space:]]|$)' || {
+    echo "the LuigiOS root Snapper configuration is missing" >&2
+    exit 1
+}
+
+snapshot_id=$(
+    snapper --no-dbus -c root create --print-number \
+        --description "Fresh LuigiOS Installation" \
+        --userdata "important=yes,luigios=fresh-install"
+)
+[[ "${snapshot_id}" =~ ^[0-9]+$ ]] || {
+    echo "Snapper did not return an installation snapshot ID" >&2
+    exit 1
+}
+snapper --no-dbus -c root list --columns number,description |
+    grep -qE "^[[:space:]]*${snapshot_id}[[:space:]]+.*Fresh LuigiOS Installation" || {
+        echo "the permanent LuigiOS installation snapshot is not readable" >&2
+        exit 1
+    }
+
+install -d -m 0700 /var/lib/luigios/recovery
+printf '%s\n' "${snapshot_id}" \
+    >/var/lib/luigios/recovery/installation-snapshot
+install -d /etc/luigios
+printf '%s\n' "${snapshot_id}" >/etc/luigios/installation-snapshot
+
+if command -v limine-snapper-sync >/dev/null; then
+    limine-snapper-sync
+fi
+echo "Permanent LuigiOS restore point: snapshot ${snapshot_id}"

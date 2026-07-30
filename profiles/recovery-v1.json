@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "product": "LuigiOS",
+  "filesystem": {
+    "required_for_fresh_start": "btrfs",
+    "root_subvolume": "@",
+    "persistent_subvolumes": {
+      "/home": "@home",
+      "/root": "@root",
+      "/srv": "@srv",
+      "/var/cache": "@cache",
+      "/var/lib/luigios": "@luigios-state",
+      "/var/log": "@log",
+      "/var/tmp": "@tmp"
+    },
+    "never_format_for_recovery": true
+  },
+  "modes": {
+    "safe-upgrade": {
+      "source": "signed-system-repositories",
+      "full_transaction_only": true,
+      "offline_system_update": true,
+      "pre_snapshot": true,
+      "post_snapshot": true
+    },
+    "repair": {
+      "source": "signed-luigios-release-repository",
+      "reinstall_package_payloads": true,
+      "preserve_package_backup_files": true,
+      "rebuild_boot_payloads": true
+    },
+    "fresh-start": {
+      "source": "permanent-installation-snapshot",
+      "new_root_subvolume": true,
+      "retain_previous_root": true,
+      "retain_persistent_subvolumes": true,
+      "reapply_safe_system_settings": true,
+      "quarantine_risky_system_overrides": true
+    }
+  },
+  "preservation": {
+    "unchanged_in_place": [
+      "/home",
+      "/root",
+      "/srv",
+      "/var/cache",
+      "/var/lib/luigios",
+      "/var/log",
+      "/var/tmp"
+    ],
+    "reapply": [
+      "/etc/NetworkManager/system-connections",
+      "/etc/adjtime",
+      "/etc/crypttab",
+      "/etc/fstab",
+      "/etc/group",
+      "/etc/gshadow",
+      "/etc/hostname",
+      "/etc/hosts",
+      "/etc/locale.conf",
+      "/etc/localtime",
+      "/etc/machine-id",
+      "/etc/passwd",
+      "/etc/shadow",
+      "/etc/subgid",
+      "/etc/subuid",
+      "/etc/vconsole.conf",
+      "/var/lib/bluetooth",
+      "/var/lib/iwd"
+    ],
+    "retain_for_review": [
+      "/etc/NetworkManager/conf.d",
+      "/etc/modprobe.d",
+      "/etc/modules-load.d",
+      "/etc/pacman.conf",
+      "/etc/pacman.d",
+      "/etc/polkit-1/rules.d",
+      "/etc/ssh",
+      "/etc/sudoers.d",
+      "/etc/sysctl.d",
+      "/etc/systemd/system",
+      "/etc/udev/rules.d"
+    ],
+    "metadata": [
+      "type",
+      "mode",
+      "uid",
+      "gid",
+      "mtime_ns",
+      "symlink_target",
+      "xattrs"
+    ],
+    "content_digest": "sha256",
+    "verify_before_cutover": true,
+    "secrets_bundle_mode": "0700"
+  },
+  "transaction": {
+    "state_root": "/var/lib/luigios/recovery",
+    "lock": "/run/lock/luigios-recovery.lock",
+    "journal": true,
+    "machine_readable_report": true,
+    "retain_failed_transaction": true,
+    "cutover_after_all_verification": true
+  },
+  "hardware_cutover": {
+    "allowed_before_vm_qualification": false,
+    "require_explicit_confirmation": true,
+    "require_external_backup": true
+  }
+}

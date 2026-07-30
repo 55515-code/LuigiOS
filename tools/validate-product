@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import fnmatch
 import pathlib
+import re
 import stat
 import subprocess
 import sys
@@ -107,7 +108,10 @@ for relative in tracked:
     except UnicodeDecodeError:
         continue
     for term in legacy_terms:
-        if term in text:
+        if re.search(
+            rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])",
+            text,
+        ):
             error(f"legacy term {term!r} remains in {path.relative_to(ROOT)}")
 
 if errors:

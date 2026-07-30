@@ -46,6 +46,9 @@ ln -sfn /usr/lib/systemd/system/cosmic-greeter.service \
 install -d "${target}/etc/systemd/system/multi-user.target.wants"
 ln -sfn /usr/lib/systemd/system/luigios-firstboot.service \
     "${target}/etc/systemd/system/multi-user.target.wants/luigios-firstboot.service"
+install -d "${target}/etc/systemd/system/system-update.target.wants"
+ln -sfn /usr/lib/systemd/system/luigios-offline-update.service \
+    "${target}/etc/systemd/system/system-update.target.wants/luigios-offline-update.service"
 install -d "${target}/etc/systemd/user/graphical-session-pre.target.wants"
 ln -sfn /usr/lib/systemd/user/luigios-first-login.service \
     "${target}/etc/systemd/user/graphical-session-pre.target.wants/luigios-first-login.service"

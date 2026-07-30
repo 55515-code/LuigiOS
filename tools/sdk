@@ -96,12 +96,27 @@ prepare() {
     rsync -a "${ROOT}/branding/assets/" "${bundle}/branding/assets/"
     install -m 0644 "${ROOT}/product/cachyos/services.json" \
         "${bundle}/services.json"
+    install -m 0644 "${ROOT}/profiles/recovery-v1.json" \
+        "${bundle}/recovery-v1.json"
     install -m 0644 "${ROOT}/product/cachyos/pacman.conf" \
         "${bundle}/pacman.conf"
+    install -d "${bundle}/recovery"
+    sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
+        awk 'NF { print $1 }' >"${bundle}/recovery/package-roots"
+    install -d "${bundle}/recovery/target-overlay"
+    rsync -a "${ROOT}/product/cachyos/overlay/" \
+        "${bundle}/recovery/target-overlay/"
+    rsync -a "${ROOT}/product/cachyos/target-overlay/" \
+        "${bundle}/recovery/target-overlay/"
     install -d "${bundle}/target-root"
     rsync -a "${ROOT}/product/cachyos/overlay/" "${bundle}/target-root/"
     rsync -a "${ROOT}/product/cachyos/target-overlay/" \
         "${bundle}/target-root/"
+    install -Dm0644 \
+        "${ROOT}/branding/assets/system/recovery/recovery.svg" \
+        "${bundle}/target-root/usr/share/icons/hicolor/scalable/apps/luigios-recovery.svg"
+    install -Dm0644 "${ROOT}/docs/RECOVERY.md" \
+        "${bundle}/target-root/usr/share/doc/luigios/RECOVERY.md"
 
     calamares="${ROOT}/product/cachyos/archiso/calamares"
     installer_bundle="${bundle}/calamares"
@@ -114,12 +129,18 @@ prepare() {
         "${installer_bundle}/shellprocess_luigios.conf"
     install -m 0644 "${calamares}/shellprocess_initialize_pacman.conf" \
         "${installer_bundle}/shellprocess_initialize_pacman.conf"
+    install -m 0644 "${calamares}/shellprocess_btrfs_snapshot.conf" \
+        "${installer_bundle}/shellprocess_btrfs_snapshot.conf"
+    install -m 0755 "${calamares}/btrfs-installation-snapshot" \
+        "${installer_bundle}/btrfs-installation-snapshot"
     install -m 0644 "${calamares}/shellprocess_limine_initramfs.conf" \
         "${installer_bundle}/shellprocess_limine_initramfs.conf"
     install -m 0644 "${calamares}/shellprocess_finalize_target.conf" \
         "${installer_bundle}/shellprocess_finalize_target.conf"
     install -m 0644 "${calamares}/services-systemd.conf" \
         "${installer_bundle}/services-systemd.conf"
+    install -m 0644 "${calamares}/mount.conf" \
+        "${installer_bundle}/mount.conf"
     install -m 0644 "${calamares}/partition.conf" \
         "${installer_bundle}/partition.conf"
     install -m 0755 "${calamares}/calamares-online.sh" \
@@ -133,6 +154,11 @@ prepare() {
         "${PROFILE}/airootfs/usr/share/applications/luigios-installer.desktop"
     install -Dm0644 "${ROOT}/branding/assets/core/luigios-logo.svg" \
         "${PROFILE}/airootfs/usr/share/icons/hicolor/scalable/apps/luigios-installer.svg"
+    install -Dm0644 \
+        "${ROOT}/branding/assets/system/recovery/recovery.svg" \
+        "${PROFILE}/airootfs/usr/share/icons/hicolor/scalable/apps/luigios-recovery.svg"
+    install -Dm0644 "${ROOT}/docs/RECOVERY.md" \
+        "${PROFILE}/airootfs/usr/share/doc/luigios/RECOVERY.md"
     branding="${PROFILE}/airootfs/usr/share/calamares/branding/luigios"
     install -d "${branding}"
     install -m 0644 "${calamares}/branding.desc" "${branding}/branding.desc"
@@ -167,6 +193,7 @@ EOF
 
     install -d "${PROFILE}/airootfs/etc/systemd/system" \
         "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants" \
+        "${PROFILE}/airootfs/etc/systemd/system/system-update.target.wants" \
         "${PROFILE}/airootfs/etc/systemd/user/graphical-session-pre.target.wants" \
         "${PROFILE}/airootfs/etc/systemd/user/graphical-session.target.wants"
     ln -sfn /usr/lib/systemd/system/cosmic-greeter.service \
@@ -177,6 +204,8 @@ EOF
         "${PROFILE}/airootfs/etc/systemd/user/graphical-session.target.wants/luigios-panel-refresh.service"
     ln -sfn /usr/lib/systemd/system/luigios-firstboot.service \
         "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/luigios-firstboot.service"
+    ln -sfn /usr/lib/systemd/system/luigios-offline-update.service \
+        "${PROFILE}/airootfs/etc/systemd/system/system-update.target.wants/luigios-offline-update.service"
     rm -f \
         "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service" \
         "${PROFILE}/airootfs/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" \
