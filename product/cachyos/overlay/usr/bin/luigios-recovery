@@ -16,11 +16,13 @@ import threading
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 
 ENGINE = "/usr/lib/luigios/recovery_engine.py"
 LIVE = "--live" in sys.argv or pathlib.Path("/run/archiso").exists()
+GTK_ARGUMENTS = [argument for argument in sys.argv if argument != "--live"]
 
 
 CSS = b"""
@@ -260,6 +262,13 @@ class RecoveryWindow(Gtk.ApplicationWindow):
             message = value.get("error", "Recovery inspection failed")
             self.status_label.add_css_class("status-warning")
         self.status_label.set_label(message)
+        self.fresh_button.set_sensitive(
+            code == 0 and value.get("fresh_start_eligible", False)
+        )
+        self.repair_button.set_sensitive(
+            code == 0
+            and value.get("offline_repository_ready", False)
+        )
 
     def finish_live_discovery(self, code, value):
         if code != 0:
@@ -284,7 +293,14 @@ class RecoveryWindow(Gtk.ApplicationWindow):
             self.repair_button.set_sensitive(False)
             return GLib.SOURCE_REMOVE
         labels = [
-            f"{target['device']} — {target['subvolume']}"
+            (
+                f"{target['device']} — {target['subvolume']}"
+                + (
+                    " — Active system"
+                    if target.get("active")
+                    else " — Retained recovery root"
+                )
+            )
             for target in self.targets
         ]
         self.target_dropdown.set_model(Gtk.StringList.new(labels))
@@ -292,14 +308,20 @@ class RecoveryWindow(Gtk.ApplicationWindow):
             (
                 index
                 for index, target in enumerate(self.targets)
-                if target["status"].get("fresh_start_eligible")
+                if target.get("active")
+                and target["status"].get("fresh_start_eligible")
             ),
-            0,
+            next(
+                (
+                    index
+                    for index, target in enumerate(self.targets)
+                    if target["status"].get("fresh_start_eligible")
+                ),
+                0,
+            ),
         )
         self.target_dropdown.set_selected(preferred)
         self.target_dropdown.set_sensitive(len(self.targets) > 1)
-        self.fresh_button.set_sensitive(True)
-        self.repair_button.set_sensitive(True)
         self.target_changed()
         return GLib.SOURCE_REMOVE
 
@@ -479,4 +501,4 @@ class RecoveryApplication(Gtk.Application):
 
 
 if __name__ == "__main__":
-    raise SystemExit(RecoveryApplication().run(sys.argv))
+    raise SystemExit(RecoveryApplication().run(GTK_ARGUMENTS))

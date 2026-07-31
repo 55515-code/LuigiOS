@@ -15,6 +15,7 @@ bash -n product/cachyos/overlay/usr/lib/luigios/firstboot
 python -m py_compile tools/package-lock tools/check-dco tools/release-source \
     tools/update-credits tools/recovery-sim \
     tools/qa/recovery-btrfs-vm \
+    tools/qa/qmp \
     product/cachyos/overlay/usr/lib/luigios/recovery_engine.py
 bash -n tools/qa/run-recovery-btrfs-vm
 ./tools/recovery-sim >/dev/null

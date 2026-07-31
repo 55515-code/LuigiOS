@@ -185,7 +185,7 @@ class ProductContract(unittest.TestCase):
             "ExecStart=/usr/bin/bash /usr/lib/luigios/firstboot",
             (
                 ROOT
-                / "product/cachyos/overlay/etc/systemd/system/"
+                / "product/cachyos/overlay/usr/lib/systemd/system/"
                 "luigios-firstboot.service"
             ).read_text(),
         )

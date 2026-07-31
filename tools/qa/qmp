@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Minimal QMP client for repeatable LuigiOS graphical VM qualification."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import socket
+import time
+from typing import Any
+
+
+class QmpError(RuntimeError):
+    """A QMP command failed."""
+
+
+class Client:
+    def __init__(self, path: pathlib.Path):
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket.connect(str(path))
+        self.stream = self.socket.makefile("rwb", buffering=0)
+        greeting = self.receive()
+        if "QMP" not in greeting:
+            raise QmpError(f"invalid QMP greeting: {greeting}")
+        self.execute("qmp_capabilities")
+
+    def receive(self) -> dict[str, Any]:
+        while True:
+            line = self.stream.readline()
+            if not line:
+                raise QmpError("QMP connection closed")
+            value = json.loads(line)
+            if "event" not in value:
+                return value
+
+    def execute(
+        self, command: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        request: dict[str, Any] = {"execute": command}
+        if arguments:
+            request["arguments"] = arguments
+        self.stream.write((json.dumps(request) + "\n").encode())
+        response = self.receive()
+        if "error" in response:
+            raise QmpError(json.dumps(response["error"], sort_keys=True))
+        return response.get("return")
+
+    def key(self, qcode: str, *, shifted: bool = False) -> None:
+        keys = []
+        if shifted:
+            keys.append({"type": "qcode", "data": "shift"})
+        keys.append({"type": "qcode", "data": qcode})
+        self.execute(
+            "send-key",
+            {"keys": keys, "hold-time": 40},
+        )
+        time.sleep(0.06)
+
+    def close(self) -> None:
+        self.stream.close()
+        self.socket.close()
+
+
+SPECIAL = {
+    " ": ("spc", False),
+    "-": ("minus", False),
+    "_": ("minus", True),
+    ".": ("dot", False),
+    ",": ("comma", False),
+    ">": ("dot", True),
+    "/": ("slash", False),
+    "|": ("backslash", True),
+    "@": ("2", True),
+    ":": ("semicolon", True),
+    ";": ("semicolon", False),
+    "+": ("equal", True),
+    "=": ("equal", False),
+    "*": ("8", True),
+}
+
+
+def type_text(client: Client, value: str) -> None:
+    for character in value:
+        if character.isalpha() and character.isascii():
+            client.key(character.lower(), shifted=character.isupper())
+        elif character.isdigit():
+            client.key(character)
+        elif character in SPECIAL:
+            qcode, shifted = SPECIAL[character]
+            client.key(qcode, shifted=shifted)
+        else:
+            raise QmpError(f"unsupported input character: {character!r}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("socket", type=pathlib.Path)
+    subcommands = parser.add_subparsers(dest="operation", required=True)
+
+    command = subcommands.add_parser("command")
+    command.add_argument("name")
+    command.add_argument("arguments", nargs="?", default="{}")
+
+    screenshot = subcommands.add_parser("screenshot")
+    screenshot.add_argument("path", type=pathlib.Path)
+
+    keys = subcommands.add_parser("keys")
+    keys.add_argument("qcodes", nargs="+")
+
+    chord = subcommands.add_parser("chord")
+    chord.add_argument("qcodes", nargs="+")
+
+    text = subcommands.add_parser("type")
+    text.add_argument("value")
+
+    click = subcommands.add_parser("click")
+    click.add_argument("x", type=int)
+    click.add_argument("y", type=int)
+    click.add_argument("--width", type=int, default=1280)
+    click.add_argument("--height", type=int, default=800)
+
+    options = parser.parse_args()
+    client = Client(options.socket)
+    try:
+        if options.operation == "command":
+            result = client.execute(
+                options.name, json.loads(options.arguments)
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif options.operation == "screenshot":
+            destination = options.path.resolve()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            client.execute(
+                "screendump",
+                {"filename": str(destination), "format": "ppm"},
+            )
+            print(destination)
+        elif options.operation == "keys":
+            for qcode in options.qcodes:
+                client.key(qcode)
+        elif options.operation == "chord":
+            client.execute(
+                "send-key",
+                {
+                    "keys": [
+                        {"type": "qcode", "data": qcode}
+                        for qcode in options.qcodes
+                    ],
+                    "hold-time": 80,
+                },
+            )
+        elif options.operation == "type":
+            type_text(client, options.value)
+        elif options.operation == "click":
+            if not (
+                0 <= options.x < options.width
+                and 0 <= options.y < options.height
+            ):
+                raise QmpError("click coordinates are outside the display")
+            x_value = round(options.x * 32767 / options.width)
+            y_value = round(options.y * 32767 / options.height)
+            client.execute(
+                "input-send-event",
+                {
+                    "events": [
+                        {
+                            "type": "abs",
+                            "data": {"axis": "x", "value": x_value},
+                        },
+                        {
+                            "type": "abs",
+                            "data": {"axis": "y", "value": y_value},
+                        },
+                    ]
+                },
+            )
+            client.execute(
+                "input-send-event",
+                {
+                    "events": [
+                        {
+                            "type": "btn",
+                            "data": {"down": True, "button": "left"},
+                        }
+                    ]
+                },
+            )
+            time.sleep(0.12)
+            client.execute(
+                "input-send-event",
+                {
+                    "events": [
+                        {
+                            "type": "btn",
+                            "data": {"down": False, "button": "left"},
+                        }
+                    ]
+                },
+            )
+        else:
+            raise AssertionError(options.operation)
+    finally:
+        client.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

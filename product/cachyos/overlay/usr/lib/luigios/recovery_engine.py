@@ -27,9 +27,6 @@ from typing import Any, Iterable
 
 
 DEFAULT_POLICY = pathlib.Path("/usr/share/luigios/recovery-v1.json")
-SOURCE_POLICY = (
-    pathlib.Path(__file__).resolve().parents[6] / "profiles/recovery-v1.json"
-)
 LOCK_PATH = pathlib.Path("/run/lock/luigios-recovery.lock")
 
 
@@ -37,10 +34,22 @@ class RecoveryError(RuntimeError):
     """An expected recovery safety or execution failure."""
 
 
+def development_policy_path(engine: pathlib.Path) -> pathlib.Path | None:
+    resolved = engine.resolve()
+    if len(resolved.parents) <= 6:
+        return None
+    return resolved.parents[6] / "profiles/recovery-v1.json"
+
+
 def load_policy(path: pathlib.Path | None = None) -> dict[str, Any]:
     candidate = path or DEFAULT_POLICY
-    if not candidate.exists() and SOURCE_POLICY.exists():
-        candidate = SOURCE_POLICY
+    source_policy = development_policy_path(pathlib.Path(__file__))
+    if (
+        not candidate.exists()
+        and source_policy is not None
+        and source_policy.exists()
+    ):
+        candidate = source_policy
     with candidate.open("r", encoding="utf-8") as stream:
         policy = json.load(stream)
     if policy.get("schema") != 1:
@@ -70,6 +79,56 @@ def atomic_json(path: pathlib.Path, value: Any, mode: int = 0o600) -> None:
     finally:
         with contextlib.suppress(FileNotFoundError):
             temporary_path.unlink()
+
+
+def atomic_copy(
+    source: pathlib.Path, destination: pathlib.Path, mode: int
+) -> None:
+    if not source.is_file() or source.is_symlink():
+        raise RecoveryError(f"required LuigiOS contract file is missing: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent
+    )
+    temporary_path = pathlib.Path(temporary)
+    try:
+        with source.open("rb", buffering=0) as input_stream:
+            with os.fdopen(descriptor, "wb", buffering=0) as output_stream:
+                shutil.copyfileobj(input_stream, output_stream)
+                os.fsync(output_stream.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, destination)
+        directory_fd = os.open(
+            destination.parent, os.O_RDONLY | os.O_DIRECTORY
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary_path.unlink()
+
+
+def exact_symlink(
+    root: pathlib.Path, destination_name: str, target: str
+) -> None:
+    safe_target_parent(root, destination_name)
+    destination = rooted(root, destination_name)
+    if destination.is_dir() and not destination.is_symlink():
+        raise RecoveryError(
+            f"refusing to replace directory with contract symlink: {destination}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(
+        f".{destination.name}.luigios-{uuid.uuid4().hex}"
+    )
+    try:
+        temporary.symlink_to(target)
+        os.replace(temporary, destination)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -227,6 +286,7 @@ def capture_preservation(
     payload.mkdir(mode=0o700)
 
     records: list[dict[str, Any]] = []
+    skipped_transient: list[dict[str, str]] = []
     seen_paths: set[str] = set()
     hardlinks: dict[tuple[int, int], tuple[str, pathlib.Path]] = {}
     groups = (
@@ -241,6 +301,14 @@ def capture_preservation(
                     continue
                 seen_paths.add(relative_text)
                 information = source.lstat()
+                if stat.S_ISSOCK(information.st_mode):
+                    skipped_transient.append(
+                        {
+                            "path": relative_text,
+                            "reason": "runtime-unix-socket",
+                        }
+                    )
+                    continue
                 hardlink_key = None
                 hardlink_destination = None
                 if stat.S_ISREG(information.st_mode):
@@ -273,6 +341,7 @@ def capture_preservation(
         "source_root": str(source_root),
         "digest": "sha256",
         "entries": records,
+        "skipped_transient": skipped_transient,
     }
     atomic_json(bundle / "manifest.json", manifest)
     verification = verify_preservation(bundle)
@@ -412,6 +481,39 @@ def command(
     )
 
 
+def mountpoints_below(path: pathlib.Path) -> list[pathlib.Path]:
+    """Read the kernel mount table without following target symlinks."""
+    target = str(path.absolute())
+    result: list[pathlib.Path] = []
+    with pathlib.Path("/proc/self/mountinfo").open(
+        "r", encoding="utf-8"
+    ) as stream:
+        for line in stream:
+            fields = line.split()
+            if len(fields) < 5:
+                continue
+            mountpoint = re.sub(
+                r"\\([0-7]{3})",
+                lambda match: chr(int(match.group(1), 8)),
+                fields[4],
+            )
+            if mountpoint == target or mountpoint.startswith(f"{target}/"):
+                result.append(pathlib.Path(mountpoint))
+    return sorted(result, key=lambda item: len(item.parts), reverse=True)
+
+
+def unmount_tree(path: pathlib.Path) -> None:
+    """Unmount synchronously; never lazy-detach a recovery target."""
+    result = command(["umount", "-R", str(path)], check=False)
+    remaining = mountpoints_below(path)
+    if remaining:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        suffix = f": {detail[-1]}" if detail else ""
+        raise RecoveryError(
+            f"recovery target remains mounted at {remaining[0]}{suffix}"
+        )
+
+
 def os_release(root: pathlib.Path) -> dict[str, str]:
     release = rooted(root, "/etc/os-release")
     result: dict[str, str] = {}
@@ -525,8 +627,9 @@ def top_level_luigios_roots(device: pathlib.Path) -> list[str]:
     device = validate_btrfs_device(device)
     base = pathlib.Path("/run/luigios-recovery/discovery")
     base.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="target-", dir=base) as temporary:
-        top = pathlib.Path(temporary)
+    top = pathlib.Path(tempfile.mkdtemp(prefix="target-", dir=base))
+    mounted = False
+    try:
         command(
             [
                 "mount",
@@ -536,18 +639,22 @@ def top_level_luigios_roots(device: pathlib.Path) -> list[str]:
                 str(top),
             ]
         )
-        try:
-            roots: list[str] = []
-            for candidate in sorted(top.iterdir(), key=lambda path: path.name):
-                if (
-                    candidate.is_dir()
-                    and not candidate.is_symlink()
-                    and os_release(candidate).get("ID") == "luigios"
-                ):
-                    roots.append(candidate.name)
-            return roots
-        finally:
-            command(["umount", str(top)], check=False)
+        mounted = True
+        roots: list[str] = []
+        for candidate in sorted(top.iterdir(), key=lambda path: path.name):
+            if (
+                candidate.is_dir()
+                and not candidate.is_symlink()
+                and os_release(candidate).get("ID") == "luigios"
+            ):
+                roots.append(candidate.name)
+        return roots
+    finally:
+        if mounted:
+            unmount_tree(top)
+        if not mountpoints_below(top):
+            with contextlib.suppress(OSError):
+                top.rmdir()
 
 
 def boot_source(root: pathlib.Path) -> str | None:
@@ -574,6 +681,92 @@ def boot_source(root: pathlib.Path) -> str | None:
     return source
 
 
+def limine_active_subvolume(root: pathlib.Path) -> str | None:
+    """Return the first top-level Btrfs root selected by Limine."""
+    configuration = rooted(root, "/boot/limine.conf")
+    if not configuration.is_file():
+        return None
+    for match in re.finditer(
+        r"(?:^|\s)rootflags=subvol=/?([^\s,]+)",
+        configuration.read_text(encoding="utf-8", errors="strict"),
+    ):
+        subvolume = match.group(1).strip("/")
+        if subvolume and "/" not in subvolume and subvolume not in {".", ".."}:
+            return subvolume
+    return None
+
+
+def live_snapshot_history_subvolume(
+    root: pathlib.Path, luigios_roots: list[str]
+) -> str | None:
+    entry = next(
+        (
+            item
+            for item in fstab_entries(root)
+            if item["target"] == "/.snapshots"
+        ),
+        None,
+    )
+    if not entry:
+        return None
+    if entry["fstype"] != "btrfs":
+        raise RecoveryError("snapshot history is not a Btrfs mount")
+    options = [
+        option.split("=", 1)[1].strip("/")
+        for option in entry["options"].split(",")
+        if option.startswith("subvol=")
+    ]
+    if len(options) != 1:
+        raise RecoveryError("snapshot history has no unique subvolume")
+    subvolume = options[0]
+    parts = subvolume.split("/")
+    if (
+        len(parts) != 2
+        or parts[1] != ".snapshots"
+        or parts[0] not in luigios_roots
+    ):
+        raise RecoveryError("snapshot history subvolume is outside LuigiOS")
+    return subvolume
+
+
+def offline_repository_ready(root: pathlib.Path) -> bool:
+    repository = rooted(root, "/usr/share/luigios/repo")
+    database = repository / "luigios-lock.db"
+    manifest = rooted(
+        root, "/usr/share/luigios/recovery/package-roots"
+    )
+    if (
+        not repository.is_dir()
+        or not database.is_file()
+        or not manifest.is_file()
+        or not shutil.which("bsdtar")
+    ):
+        return False
+    roots = {
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    if not roots:
+        return False
+    result = command(
+        ["bsdtar", "-xOf", str(database)], check=False
+    )
+    if result.returncode != 0:
+        return False
+    records = re.findall(
+        r"(?:^|\n)%NAME%\n([^\n]+)\n"
+        r"(?:(?!\n%NAME%\n).)*?"
+        r"\n%FILENAME%\n([^\n]+)",
+        result.stdout,
+        re.DOTALL,
+    )
+    packages = {name: filename for name, filename in records}
+    return roots.issubset(packages) and all(
+        (repository / packages[name]).is_file() for name in roots
+    )
+
+
 @contextlib.contextmanager
 def mounted_live_target(
     device: pathlib.Path,
@@ -584,63 +777,133 @@ def mounted_live_target(
 ):
     require_root()
     device = validate_btrfs_device(device)
+    luigios_roots = top_level_luigios_roots(device)
     if (
         not subvolume
         or "/" in subvolume
         or subvolume in {".", ".."}
-        or subvolume not in top_level_luigios_roots(device)
+        or subvolume not in luigios_roots
     ):
         raise RecoveryError(f"invalid LuigiOS root subvolume: {subvolume}")
     base = pathlib.Path("/run/luigios-recovery/live")
     base.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="target-", dir=base) as temporary:
-        target = pathlib.Path(temporary) / "root"
-        target.mkdir()
-        mounted: list[pathlib.Path] = []
-        mode = "rw" if writable else "ro"
-        try:
+    temporary = pathlib.Path(tempfile.mkdtemp(prefix="target-", dir=base))
+    target = temporary / "root"
+    target.mkdir()
+    mounted = False
+    mode = "rw" if writable else "ro"
+    try:
+        command(
+            [
+                "mount",
+                "-o",
+                f"{mode},nosuid,nodev,subvol=/{subvolume}",
+                str(device),
+                str(target),
+            ]
+        )
+        mounted = True
+        media_repository = pathlib.Path(
+            "/usr/share/luigios/repo"
+        )
+        target_repository = rooted(
+            target, "/usr/share/luigios/repo"
+        )
+        if offline_repository_ready(pathlib.Path("/")):
+            if target_repository.is_symlink():
+                raise RecoveryError(
+                    "offline repository mountpoint is a symlink"
+                )
+            target_repository.mkdir(parents=True, exist_ok=True)
+            command(
+                [
+                    "mount",
+                    "--bind",
+                    str(media_repository),
+                    str(target_repository),
+                ]
+            )
             command(
                 [
                     "mount",
                     "-o",
-                    f"{mode},nosuid,nodev,subvol=/{subvolume}",
-                    str(device),
-                    str(target),
+                    "remount,bind,ro,nosuid,nodev",
+                    str(target_repository),
                 ]
             )
-            mounted.append(target)
-            for mountpoint, persistent in policy["filesystem"][
-                "persistent_subvolumes"
-            ].items():
-                destination = rooted(target, mountpoint)
-                if destination.is_symlink():
-                    raise RecoveryError(
-                        f"persistent mountpoint is a symlink: {mountpoint}"
-                    )
+        history = live_snapshot_history_subvolume(
+            target, luigios_roots
+        )
+        if history:
+            destination = rooted(target, "/.snapshots")
+            if destination.is_symlink():
+                raise RecoveryError(
+                    "snapshot history mountpoint is a symlink"
+                )
+            destination.mkdir(parents=True, exist_ok=True)
+            command(
+                [
+                    "mount",
+                    "-o",
+                    f"{mode},nosuid,nodev,noexec,subvol=/{history}",
+                    str(device),
+                    str(destination),
+                ]
+            )
+        for mountpoint, persistent in policy["filesystem"][
+            "persistent_subvolumes"
+        ].items():
+            destination = rooted(target, mountpoint)
+            if destination.is_symlink():
+                raise RecoveryError(
+                    f"persistent mountpoint is a symlink: {mountpoint}"
+                )
+            destination.mkdir(parents=True, exist_ok=True)
+            command(
+                [
+                    "mount",
+                    "-o",
+                    f"{mode},nosuid,nodev,subvol=/{persistent}",
+                    str(device),
+                    str(destination),
+                ]
+            )
+        esp = boot_source(target)
+        if esp:
+            destination = rooted(target, "/boot")
+            if destination.is_symlink():
+                raise RecoveryError("boot mountpoint is a symlink")
+            destination.mkdir(parents=True, exist_ok=True)
+            options = "rw,nodev,nosuid" if writable else "ro,nodev,nosuid"
+            command(["mount", "-o", options, esp, str(destination)])
+        if writable:
+            for source in ("/dev", "/proc", "/sys"):
+                destination = rooted(target, source)
                 destination.mkdir(parents=True, exist_ok=True)
                 command(
-                    [
-                        "mount",
-                        "-o",
-                        f"{mode},nosuid,nodev,subvol=/{persistent}",
-                        str(device),
-                        str(destination),
-                    ]
+                    ["mount", "--bind", source, str(destination)]
                 )
-                mounted.append(destination)
-            esp = boot_source(target)
-            if esp:
-                destination = rooted(target, "/boot")
-                if destination.is_symlink():
-                    raise RecoveryError("boot mountpoint is a symlink")
-                destination.mkdir(parents=True, exist_ok=True)
-                options = "rw,nodev,nosuid" if writable else "ro,nodev,nosuid"
-                command(["mount", "-o", options, esp, str(destination)])
-                mounted.append(destination)
-            yield target
-        finally:
-            for mountpoint in reversed(mounted):
-                command(["umount", "-R", str(mountpoint)], check=False)
+            run_directory = rooted(target, "/run")
+            run_directory.mkdir(parents=True, exist_ok=True)
+            command(
+                [
+                    "mount",
+                    "-t",
+                    "tmpfs",
+                    "-o",
+                    "nosuid,nodev,mode=0755",
+                    "tmpfs",
+                    str(run_directory),
+                ]
+            )
+        yield target
+    finally:
+        if mounted:
+            unmount_tree(target)
+        if not mountpoints_below(target):
+            with contextlib.suppress(OSError):
+                target.rmdir()
+                temporary.rmdir()
 
 
 def discover_live_targets(policy: dict[str, Any]) -> dict[str, Any]:
@@ -655,10 +918,12 @@ def discover_live_targets(policy: dict[str, Any]) -> dict[str, Any]:
                         device, subvolume, policy, writable=False
                     ) as root:
                         status = inspect_system(root, policy)
+                        active_subvolume = limine_active_subvolume(root)
                     targets.append(
                         {
                             "device": str(device),
                             "subvolume": subvolume,
+                            "active": active_subvolume == subvolume,
                             "status": status,
                         }
                     )
@@ -672,6 +937,13 @@ def discover_live_targets(policy: dict[str, Any]) -> dict[str, Any]:
                     )
         except (RecoveryError, OSError, subprocess.CalledProcessError) as error:
             errors.append({"device": str(device), "error": str(error)})
+    targets.sort(
+        key=lambda target: (
+            not target["active"],
+            target["device"],
+            target["subvolume"],
+        )
+    )
     return {
         "schema": 1,
         "targets": targets,
@@ -724,10 +996,10 @@ def inspect_system(root: pathlib.Path, policy: dict[str, Any]) -> dict[str, Any]
             "persistent subvolumes are not separate: "
             + ", ".join(missing_subvolumes)
         )
-    offline_repo = rooted(root, "/usr/share/luigios/repo")
     package_roots = rooted(
         root, "/usr/share/luigios/recovery/package-roots"
     )
+    repository_ready = offline_repository_ready(root)
     return {
         "schema": 1,
         "root": str(root),
@@ -735,7 +1007,8 @@ def inspect_system(root: pathlib.Path, policy: dict[str, Any]) -> dict[str, Any]
         "mount": mount,
         "installation_snapshot": snapshot_id,
         "persistent_subvolumes": persistent,
-        "offline_repository": offline_repo.is_dir(),
+        "offline_repository": repository_ready,
+        "offline_repository_ready": repository_ready,
         "package_roots": package_roots.is_file(),
         "fresh_start_eligible": not blockers,
         "blockers": blockers,
@@ -774,6 +1047,11 @@ def make_plan(
         ],
     }[action]
     blockers = list(status["blockers"])
+    if action == "repair" and not status["offline_repository_ready"]:
+        blockers.append(
+            "signed repair package pool is unavailable; boot the matching "
+            "LuigiOS live medium"
+        )
     if action != "fresh-start":
         blockers = [
             item
@@ -840,8 +1118,11 @@ def log_command(
         stream.flush()
         os.fsync(stream.fileno())
     if check and result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip().splitlines()
+        suffix = f": {details[-1][:300]}" if details else ""
         raise RecoveryError(
-            f"command failed ({result.returncode}): {' '.join(arguments)}"
+            f"command failed ({result.returncode}): "
+            f"{' '.join(arguments)}{suffix}"
         )
     return result
 
@@ -873,11 +1154,52 @@ def snapper_snapshot(
     ]
     if pre_number:
         arguments.extend(["--pre-number", pre_number])
-    result = log_command(arguments, log)
+    result = log_command(isolated_snapper_command(root, arguments), log)
     snapshot = result.stdout.strip().splitlines()[-1]
     if not snapshot.isdigit():
         raise RecoveryError("Snapper did not return a snapshot number")
     return snapshot
+
+
+def isolated_snapper_command(
+    root: pathlib.Path,
+    arguments: list[str],
+    *,
+    plugin_directory: pathlib.Path = pathlib.Path(
+        "/usr/lib/snapper/plugins"
+    ),
+    empty_directory: pathlib.Path = pathlib.Path(
+        "/run/luigios-recovery/empty-snapper-plugins"
+    ),
+) -> list[str]:
+    """Disable host-root-only client plugins for an offline target."""
+    if root.resolve() == pathlib.Path("/") or not plugin_directory.is_dir():
+        return arguments
+    unshare = shutil.which("unshare")
+    if not unshare:
+        raise RecoveryError(
+            "unshare is required to isolate Snapper plugins for live recovery"
+        )
+    empty_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if empty_directory.is_symlink() or not empty_directory.is_dir():
+        raise RecoveryError("unsafe empty Snapper plugin directory")
+    script = (
+        'mount --bind "$1" "$2" && shift 2 && exec "$@"'
+    )
+    return [
+        unshare,
+        "--mount",
+        "--propagation",
+        "private",
+        "--",
+        "/bin/sh",
+        "-c",
+        script,
+        "luigios-snapper",
+        str(empty_directory),
+        str(plugin_directory),
+        *arguments,
+    ]
 
 
 def b2sum(path: pathlib.Path) -> str:
@@ -934,8 +1256,23 @@ def chroot_command(
     return log_command(["chroot", str(root.resolve()), *arguments], log)
 
 
+def boot_regeneration_command(root: pathlib.Path) -> list[str]:
+    for command_path in (
+        "/usr/bin/limine-mkinitcpio",
+        "/usr/local/bin/limine-mkinitcpio",
+    ):
+        if rooted(root, command_path).is_file():
+            return [command_path]
+    presets = rooted(root, "/etc/mkinitcpio.d")
+    if presets.is_dir() and any(presets.glob("*.preset")):
+        return ["/usr/bin/mkinitcpio", "-P"]
+    raise RecoveryError(
+        "no supported initramfs regeneration path is available"
+    )
+
+
 def regenerate_boot(root: pathlib.Path, log: pathlib.Path) -> None:
-    chroot_command(root, ["/usr/bin/mkinitcpio", "-P"], log)
+    chroot_command(root, boot_regeneration_command(root), log)
     update = rooted(root, "/usr/bin/limine-update")
     if update.exists():
         chroot_command(root, ["/usr/bin/limine-update"], log)
@@ -945,6 +1282,90 @@ def regenerate_boot(root: pathlib.Path, log: pathlib.Path) -> None:
 def ensure_luigios(root: pathlib.Path) -> None:
     if os_release(root).get("ID") != "luigios":
         raise RecoveryError(f"refusing non-LuigiOS target: {root}")
+
+
+def reassert_luigios_contract(root: pathlib.Path) -> dict[str, Any]:
+    """Restore identity and enablement files owned by the LuigiOS image."""
+    root = normalized_root(root)
+    copies = {
+        "/usr/share/luigios/os-release": ("/usr/lib/os-release", 0o644),
+        "/usr/share/luigios/pacman.conf": ("/etc/pacman.conf", 0o644),
+    }
+    for source_name, (destination_name, mode) in copies.items():
+        safe_target_parent(root, destination_name)
+        atomic_copy(
+            rooted(root, source_name),
+            rooted(root, destination_name),
+            mode,
+        )
+
+    symlinks = {
+        "/etc/os-release": "../usr/lib/os-release",
+        "/etc/systemd/system/display-manager.service":
+            "/usr/lib/systemd/system/cosmic-greeter.service",
+        (
+            "/etc/systemd/system/multi-user.target.wants/"
+            "luigios-firstboot.service"
+        ): "/usr/lib/systemd/system/luigios-firstboot.service",
+        (
+            "/etc/systemd/system/system-update.target.wants/"
+            "luigios-offline-update.service"
+        ): "/usr/lib/systemd/system/luigios-offline-update.service",
+        (
+            "/etc/systemd/user/graphical-session-pre.target.wants/"
+            "luigios-first-login.service"
+        ): "/usr/lib/systemd/user/luigios-first-login.service",
+        (
+            "/etc/systemd/user/graphical-session.target.wants/"
+            "luigios-panel-refresh.service"
+        ): "/usr/lib/systemd/user/luigios-panel-refresh.service",
+    }
+    for destination_name, target in symlinks.items():
+        destination = rooted(root, destination_name)
+        target_path = (
+            rooted(root, target)
+            if target.startswith("/")
+            else destination.parent / target
+        )
+        if not target_path.is_file():
+            raise RecoveryError(
+                f"required LuigiOS contract unit is missing: {target}"
+            )
+        exact_symlink(root, destination_name, target)
+
+    removed: list[str] = []
+    for obsolete in (
+        "/etc/systemd/system/luigios-firstboot.service",
+        "/etc/systemd/system/multi-user.target.wants/sshd.service",
+        (
+            "/etc/systemd/system/multi-user.target.wants/"
+            "systemd-networkd.service"
+        ),
+        (
+            "/etc/systemd/system/sockets.target.wants/"
+            "systemd-networkd.socket"
+        ),
+        (
+            "/etc/systemd/system/multi-user.target.wants/"
+            "wpa_supplicant.service"
+        ),
+    ):
+        candidate = rooted(root, obsolete)
+        if not candidate.exists() and not candidate.is_symlink():
+            continue
+        if candidate.is_dir() and not candidate.is_symlink():
+            raise RecoveryError(
+                f"refusing to remove contract path directory: {candidate}"
+            )
+        candidate.unlink()
+        removed.append(obsolete)
+
+    ensure_luigios(root)
+    return {
+        "identity": sorted(destination for destination, _mode in copies.values()),
+        "symlinks": sorted(symlinks),
+        "removed": removed,
+    }
 
 
 def locked_pacman_config(root: pathlib.Path, transaction: pathlib.Path) -> str:
@@ -986,6 +1407,11 @@ def repair_system(
     require_root()
     root = normalized_root(root)
     ensure_luigios(root)
+    if not offline_repository_ready(root):
+        raise RecoveryError(
+            "signed repair package pool is unavailable; boot the matching "
+            "LuigiOS live medium"
+        )
     identifier = transaction_id("repair")
     transaction = transaction_directory(root, identifier)
     log = transaction / "transaction.log"
@@ -995,18 +1421,76 @@ def repair_system(
         "action": "repair",
         "root": str(root),
         "status": "running",
+        "previous_root_retained": True,
+        "formatted_storage": False,
     }
     atomic_json(transaction / "result.json", result)
+    bundle = transaction / "preservation"
+    top = pathlib.Path("/run/luigios-recovery") / identifier / "top"
+    mounted: list[pathlib.Path] = []
+    boot_backup = transaction / "esp-backup"
+    boot_changed = False
     try:
-        bundle = transaction / "preservation"
         capture_preservation(root, bundle, policy)
+        result["persistent_before"] = {
+            path: subvolume_identity(rooted(root, path))
+            for path in policy["filesystem"]["persistent_subvolumes"]
+        }
         result["pre_snapshot"] = snapper_snapshot(
-            "Before LuigiOS system repair", identifier, log, root=root
+            "Before LuigiOS system repair",
+            identifier,
+            log,
+            root=root,
         )
-        config = locked_pacman_config(root, transaction)
-        pacman = ["pacman"]
-        if root.resolve() != pathlib.Path("/"):
-            pacman.extend(["--sysroot", str(root)])
+        mount = findmnt(root)
+        if not mount or mount["fstype"] != "btrfs":
+            raise RecoveryError("transactional repair requires a Btrfs root")
+        source = mount["source"].split("[", 1)[0]
+        old_subvolume = mount["fsroot"].lstrip("/")
+        top.mkdir(parents=True)
+        log_command(
+            ["mount", "-o", "subvolid=5", source, str(top)], log
+        )
+        new_name = f"@luigios-repair-{identifier.rsplit('-', 1)[-1]}"
+        new_root = top / new_name
+        if new_root.exists():
+            raise RecoveryError(f"repair candidate already exists: {new_name}")
+        log_command(
+            [
+                "btrfs",
+                "subvolume",
+                "snapshot",
+                str(top / old_subvolume),
+                str(new_root),
+            ],
+            log,
+        )
+
+        boot_backup.mkdir(mode=0o700)
+        log_command(
+            [
+                "rsync",
+                "-aH",
+                "--delete",
+                f"{rooted(root, '/boot')}/",
+                f"{boot_backup}/",
+            ],
+            log,
+        )
+        mounted = bind_for_chroot(
+            new_root, root, include_repository=True
+        )
+        boot_changed = True
+        transaction_relative = (
+            pathlib.PurePosixPath("/") / transaction.relative_to(root)
+        )
+        candidate_transaction = rooted(
+            new_root, str(transaction_relative)
+        )
+        config = locked_pacman_config(
+            new_root, candidate_transaction
+        )
+        pacman = ["pacman", "--sysroot", str(new_root)]
         log_command([*pacman, "--config", config, "-Sy", "--noconfirm"], log)
         log_command(
             [
@@ -1015,7 +1499,7 @@ def repair_system(
                 config,
                 "-S",
                 "--noconfirm",
-                *package_roots(root),
+                *package_roots(new_root),
             ],
             log,
         )
@@ -1030,30 +1514,80 @@ def repair_system(
                 "-aHAX",
                 "--numeric-ids",
                 f"{overlay}/",
-                f"{root}/",
+                f"{new_root}/",
             ],
             log,
         )
-        restore_preservation(bundle, root)
-        verify_package_database(root, log)
-        regenerate_boot(root, log)
-        if result.get("pre_snapshot"):
-            result["post_snapshot"] = snapper_snapshot(
-                "After LuigiOS system repair",
-                identifier,
-                log,
-                snapshot_type="post",
-                pre_number=result["pre_snapshot"],
-                root=root,
+        result["contract"] = reassert_luigios_contract(new_root)
+        restore_preservation(bundle, new_root)
+        patch_subvolume_boot(new_root, old_subvolume, new_name)
+        verify_package_database(new_root, log)
+        regenerate_boot(new_root, log)
+        result["previous_boot_entries"] = add_previous_system_boot_entries(
+            new_root, new_name, old_subvolume
+        )
+        limine = rooted(new_root, "/boot/limine.conf").read_text(
+            encoding="utf-8"
+        )
+        if f"rootflags=subvol=/{new_name}" not in limine:
+            raise RecoveryError(
+                "repaired boot entry does not select the candidate root"
             )
+        if f"rootflags=subvol=/{old_subvolume}" not in limine:
+            raise RecoveryError(
+                "repair has no boot entry for the previous system"
+            )
+        result["persistent_after"] = {
+            path: subvolume_identity(rooted(root, path))
+            for path in policy["filesystem"]["persistent_subvolumes"]
+        }
+        if result["persistent_before"] != result["persistent_after"]:
+            raise RecoveryError("a persistent data subvolume changed identity")
         result["preservation"] = verify_preservation(bundle)
-        result["boot"] = verify_boot_payloads(root)
-        result["status"] = "complete"
+        result["boot"] = verify_boot_payloads(new_root)
+        result["new_root"] = new_name
+        result["previous_root"] = old_subvolume
+        result["status"] = "ready-to-reboot"
+        result["reboot_required"] = True
     except Exception as error:
         result["status"] = "failed-safe"
         result["error"] = str(error)
+        if boot_changed and boot_backup.is_dir():
+            log_command(
+                [
+                    "rsync",
+                    "-aH",
+                    "--delete",
+                    f"{boot_backup}/",
+                    f"{rooted(root, '/boot')}/",
+                ],
+                log,
+                check=False,
+            )
+            result["esp_restored"] = True
         atomic_json(transaction / "result.json", result)
         raise
+    finally:
+        try:
+            cleanup_chroot_and_top(mounted, top)
+        except Exception as cleanup_error:
+            result["status"] = "failed-safe"
+            result["error"] = str(cleanup_error)
+            if boot_changed and boot_backup.is_dir():
+                log_command(
+                    [
+                        "rsync",
+                        "-aH",
+                        "--delete",
+                        f"{boot_backup}/",
+                        f"{rooted(root, '/boot')}/",
+                    ],
+                    log,
+                    check=False,
+                )
+                result["esp_restored"] = True
+            atomic_json(transaction / "result.json", result)
+            raise
     atomic_json(transaction / "result.json", result)
     return result
 
@@ -1276,6 +1810,81 @@ def patch_subvolume_boot(
     rooted(new_root, "/.snapshots").mkdir(parents=True, exist_ok=True)
 
 
+PREVIOUS_BOOT_BEGIN = "### LuigiOS previous system begin"
+PREVIOUS_BOOT_END = "### LuigiOS previous system end"
+
+
+def add_previous_system_boot_entries(
+    root: pathlib.Path,
+    current_subvolume: str,
+    previous_subvolume: str,
+) -> int:
+    """Add writable previous-root entries using the verified current payloads."""
+    configuration = rooted(root, "/boot/limine.conf")
+    if not configuration.is_file():
+        raise RecoveryError("Fresh Start root has no Limine configuration")
+    text = configuration.read_text(encoding="utf-8", errors="strict")
+    marked = re.compile(
+        rf"\n?{re.escape(PREVIOUS_BOOT_BEGIN)}.*?"
+        rf"{re.escape(PREVIOUS_BOOT_END)}\n?",
+        re.DOTALL,
+    )
+    text = marked.sub("\n", text).rstrip() + "\n"
+    lines = text.splitlines()
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if line.startswith("//linux-")
+    ]
+    blocks: list[str] = []
+    current_variants = (
+        f"rootflags=subvol=/{current_subvolume.lstrip('/')}",
+        f"rootflags=subvol={current_subvolume.lstrip('/')}",
+    )
+    previous_flag = (
+        f"rootflags=subvol=/{previous_subvolume.lstrip('/')}"
+    )
+    for start in starts:
+        end = start + 1
+        while end < len(lines) and not lines[end].startswith("/"):
+            end += 1
+        block = lines[start:end]
+        replaced = 0
+        cloned: list[str] = []
+        for line in block:
+            for variant in current_variants:
+                if variant in line:
+                    line = line.replace(variant, previous_flag)
+                    replaced += 1
+            cloned.append(line)
+        if replaced != 1:
+            continue
+        kernel = block[0].removeprefix("//")
+        cloned[0] = f"//Previous system - {kernel}"
+        blocks.append("\n".join(cloned))
+    if not blocks:
+        raise RecoveryError(
+            "unable to create a boot entry for the previous system"
+        )
+    section = "\n".join(
+        [
+            PREVIOUS_BOOT_BEGIN,
+            "/+LuigiOS Previous System",
+            (
+                "comment: Writable system retained immediately before "
+                "LuigiOS Fresh Start"
+            ),
+            *blocks,
+            PREVIOUS_BOOT_END,
+        ]
+    )
+    configuration.write_text(
+        text.rstrip() + "\n\n" + section + "\n",
+        encoding="utf-8",
+    )
+    return len(blocks)
+
+
 def snapshot_history_subvolume(
     root: pathlib.Path, current_root_subvolume: str
 ) -> str:
@@ -1304,7 +1913,10 @@ def subvolume_identity(path: pathlib.Path) -> str:
 
 
 def bind_for_chroot(
-    new_root: pathlib.Path, source_root: pathlib.Path = pathlib.Path("/")
+    new_root: pathlib.Path,
+    source_root: pathlib.Path = pathlib.Path("/"),
+    *,
+    include_repository: bool = False,
 ) -> list[pathlib.Path]:
     mounted: list[pathlib.Path] = []
     target_sources = [
@@ -1317,6 +1929,8 @@ def bind_for_chroot(
         "/var/log",
         "/var/tmp",
     ]
+    if include_repository:
+        target_sources.append("/usr/share/luigios/repo")
     host_sources = ["/dev", "/proc", "/sys"]
     try:
         for absolute in target_sources + host_sources:
@@ -1327,8 +1941,7 @@ def bind_for_chroot(
             )
             destination = rooted(new_root, absolute)
             destination.mkdir(parents=True, exist_ok=True)
-            command(["mount", "--rbind", str(source), str(destination)])
-            command(["mount", "--make-rslave", str(destination)])
+            command(["mount", "--bind", str(source), str(destination)])
             mounted.append(destination)
         run_directory = rooted(new_root, "/run")
         run_directory.mkdir(parents=True, exist_ok=True)
@@ -1351,8 +1964,34 @@ def bind_for_chroot(
 
 
 def unmount_chroot(mounted: list[pathlib.Path]) -> None:
+    errors: list[Exception] = []
     for path in reversed(mounted):
-        command(["umount", "-R", str(path)], check=False)
+        try:
+            unmount_tree(path)
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        raise errors[0]
+
+
+def cleanup_chroot_and_top(
+    mounted: list[pathlib.Path], top: pathlib.Path
+) -> None:
+    cleanup_error: Exception | None = None
+    try:
+        unmount_chroot(mounted)
+    except Exception as error:
+        cleanup_error = error
+    if top.is_mount() or mountpoints_below(top):
+        try:
+            unmount_tree(top)
+        except Exception as error:
+            cleanup_error = error
+    remaining = mountpoints_below(top)
+    if remaining:
+        raise RecoveryError(
+            f"recovery candidate remains mounted at {remaining[0]}"
+        ) from cleanup_error
 
 
 def fresh_start(
@@ -1452,6 +2091,9 @@ def fresh_start(
         mounted = bind_for_chroot(new_root, root)
         boot_changed = True
         regenerate_boot(new_root, log)
+        result["previous_boot_entries"] = add_previous_system_boot_entries(
+            new_root, new_name, old_subvolume
+        )
         limine = rooted(new_root, "/boot/limine.conf").read_text(
             encoding="utf-8"
         )
@@ -1459,6 +2101,11 @@ def fresh_start(
         if expected_rootflag not in limine:
             raise RecoveryError(
                 "new Limine entry does not select the Fresh Start root"
+            )
+        previous_rootflag = f"rootflags=subvol=/{old_subvolume}"
+        if previous_rootflag not in limine:
+            raise RecoveryError(
+                "Limine has no boot entry for the previous system"
             )
         result["persistent_after"] = {
             path: subvolume_identity(rooted(root, path))
@@ -1490,9 +2137,26 @@ def fresh_start(
         atomic_json(transaction / "result.json", result)
         raise
     finally:
-        unmount_chroot(mounted)
-        if top.is_mount():
-            command(["umount", str(top)], check=False)
+        try:
+            cleanup_chroot_and_top(mounted, top)
+        except Exception as cleanup_error:
+            result["status"] = "failed-safe"
+            result["error"] = str(cleanup_error)
+            if boot_changed and boot_backup.is_dir():
+                log_command(
+                    [
+                        "rsync",
+                        "-aH",
+                        "--delete",
+                        f"{boot_backup}/",
+                        f"{rooted(root, '/boot')}/",
+                    ],
+                    log,
+                    check=False,
+                )
+                result["esp_restored"] = True
+            atomic_json(transaction / "result.json", result)
+            raise
     atomic_json(transaction / "result.json", result)
     return result
 
@@ -1547,6 +2211,34 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def validate_pkexec_scope(options: argparse.Namespace) -> None:
+    """Keep the PolicyKit entry point limited to product workflows.
+
+    The same engine exposes low-level preservation helpers for root-owned
+    services and qualification. A desktop user authorized for recovery must
+    not be able to turn those helpers or an alternate policy into a generic
+    privileged file copier.
+    """
+    if "PKEXEC_UID" not in os.environ:
+        return
+    if options.policy is not None:
+        raise RecoveryError("PolicyKit recovery cannot use an alternate policy")
+    allowed = {
+        "discover-targets",
+        "plan",
+        "repair",
+        "fresh-start",
+        "stage-upgrade",
+    }
+    if options.command not in allowed:
+        raise RecoveryError(
+            f"command is not available through PolicyKit: {options.command}"
+        )
+    root = getattr(options, "root", pathlib.Path("/"))
+    if root != pathlib.Path("/"):
+        raise RecoveryError("PolicyKit recovery cannot select an alternate root")
+
+
 @contextlib.contextmanager
 def selected_root(
     options: argparse.Namespace,
@@ -1572,6 +2264,7 @@ def selected_root(
 def main(arguments: list[str] | None = None) -> int:
     options = parser().parse_args(arguments)
     try:
+        validate_pkexec_scope(options)
         policy = load_policy(options.policy)
         if options.command == "status":
             with selected_root(options, policy, writable=False) as root:
