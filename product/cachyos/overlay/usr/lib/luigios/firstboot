@@ -39,4 +39,16 @@ ufw logging low
 ufw --force enable
 
 bash /usr/share/luigios/cosmic-rice/apply-system.sh
+
+# Designate Cromite as the default primary web browser on the installed
+# system so xdg-aware applications resolve to Cromite on first boot.
+if command -v xdg-settings >/dev/null 2>&1; then
+    xdg-settings set default-web-browser io.github.cromite.cromite.desktop
+fi
+if command -v xdg-mime >/dev/null 2>&1; then
+    xdg-mime default io.github.cromite.cromite.desktop text/html
+    xdg-mime default io.github.cromite.cromite.desktop x-scheme-handler/http
+    xdg-mime default io.github.cromite.cromite.desktop x-scheme-handler/https
+fi
+
 touch /var/lib/luigios/firstboot-v1

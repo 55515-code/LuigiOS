@@ -238,6 +238,14 @@ write_cosmic com.system76.CosmicAppList favorites '[
     "com.system76.CosmicStore",
 ]'
 
+# Designate Cromite as the default primary web browser so every
+# application that queries the XDG default browser receives Cromite
+# regardless of whether this is the live image or the installed system.
+xdg-settings set default-web-browser io.github.cromite.cromite.desktop
+xdg-mime default io.github.cromite.cromite.desktop text/html
+xdg-mime default io.github.cromite.cromite.desktop x-scheme-handler/http
+xdg-mime default io.github.cromite.cromite.desktop x-scheme-handler/https
+
 echo "LuigiOS COSMIC rice applied."
 echo "Backup: ${backup}"
 echo "Reload Code - OSS and log out/in if a running shell component does not refresh."

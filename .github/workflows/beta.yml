@@ -1,0 +1,44 @@
+name: Beta build
+
+on:
+  push:
+    branches: ["beta"]
+  pull_request:
+    branches: ["beta"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-beta:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Validate source
+        run: ./tools/ci-check
+      - name: Build beta ISO with LUIGIOS_BETA=1
+        run: LUIGIOS_BETA=1 ./tools/sdk image --beta
+      - name: Verify beta label and iso_name
+        run: |
+          iso_name=$(jq -r '.build.iso_name' .sdk/build-state.json)
+          [[ "${iso_name}" == "luigios-beta" ]] || {
+            echo "expected iso_name=luigios-beta, got: ${iso_name}" >&2
+            exit 1
+          }
+          iso_file=$(find dist -maxdepth 1 -name 'luigios-beta-*.iso' -print -quit)
+          [[ -n "${iso_file}" ]] || { echo "beta ISO not found in dist/" >&2; exit 1; }
+      - name: Record dependency-lock digest
+        run: sha256sum sdk/package-lock.json > package-lock.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: beta-iso-${{ github.sha }}
+          path: |
+            dist/luigios-beta-*.iso
+            package-lock.sha256
+          retention-days: 30

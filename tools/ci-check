@@ -7,6 +7,7 @@ cd "${root}"
 python -m unittest discover -s tests -v
 ./tools/package-lock validate
 ./tools/validate-product
+./tools/validate-cromite
 
 bash -n tools/sdk
 bash -n branding/cosmic-rice/apply-user.sh
@@ -14,6 +15,7 @@ bash -n branding/cosmic-rice/apply-system.sh
 bash -n product/cachyos/overlay/usr/lib/luigios/firstboot
 python -m py_compile tools/package-lock tools/check-dco tools/release-source \
     tools/update-credits tools/recovery-sim \
+    tools/build-aur tools/validate-cromite \
     tools/qa/recovery-btrfs-vm \
     tools/qa/qmp \
     product/cachyos/overlay/usr/lib/luigios/recovery_engine.py

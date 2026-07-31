@@ -48,6 +48,28 @@ if grep -Eiq 'batocera|steam|gamescope|retroarch|emulationstation|plasma|sddm' \
     exit 1
 fi
 
+# Verify Cromite desktop entry is present in the ISO.
+grep -q 'io.github.cromite.cromite.desktop' <<<"${listing}" || {
+    echo "Cromite desktop entry is missing from the ISO" >&2
+    exit 1
+}
+
+# Verify the Cromite binary is included in the squashfs payload.
+if command -v unsquashfs >/dev/null 2>&1; then
+    workdir=$(mktemp -d)
+    trap 'rm -rf "${workdir}"' EXIT
+    unsquashfs -d "${workdir}" -e "usr/bin/cromite" "${image}"
+    [[ -f "${workdir}/usr/bin/cromite" ]] || {
+        echo "Cromite binary is missing from the live squashfs" >&2
+        exit 1
+    }
+else
+    echo "warning: unsquashfs not available; Cromite binary not verified inside squashfs" >&2
+fi
+
+# Validate source-level Cromite configuration.
+"${ROOT}/tools/validate-cromite" >/dev/null
+
 checksum="${image}.sha256"
 (
     cd -- "$(dirname -- "${image}")"

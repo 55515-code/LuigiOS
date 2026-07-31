@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Build AUR packages and emit their lock metadata.
+
+Usage:
+    tools/build-aur <package> [<package> ...] [--cache-dir DIR] [--json]
+
+Each package is resolved through the AUR RPC API, its PKGBUILD is downloaded,
+build dependencies are installed, and the package is compiled with makepkg.
+The resulting package file and its SHA-256 digest are printed as JSON records.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from typing import Any
+
+AUR_RPC = "https://aur.archlinux.org/rpc/?v=5&type=info"
+AUR_BASE = "https://aur.archlinux.org"
+
+
+class AurError(RuntimeError):
+    """An AUR build or resolution failure."""
+
+
+def sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def aur_info(name: str) -> dict[str, Any]:
+    import urllib.request
+
+    url = f"{AUR_RPC}&arg[]={name}"
+    with urllib.request.urlopen(url, timeout=30) as response:
+        data = json.loads(response.read())
+    results = data.get("results", [])
+    if not results:
+        raise AurError(f"package not found in AUR: {name}")
+    return results[0]
+
+
+def download_pkgbuild(name: str, workdir: pathlib.Path) -> pathlib.Path:
+    url = f"{AUR_BASE}/cgit/aur.git/snapshot/{name}.tar.gz"
+    archive = workdir / f"{name}.tar.gz"
+    import urllib.request
+
+    urllib.request.urlretrieve(url, archive)
+    source = workdir / name
+    with tarfile.open(archive) as tar:
+        tar.extractall(workdir)
+    return source
+
+
+def install_build_deps(pkgbuild_dir: pathlib.Path, cache_dir: pathlib.Path) -> None:
+    srcinfo = pkgbuild_dir / ".SRCINFO"
+    deps: list[str] = []
+    if srcinfo.is_file():
+        for line in srcinfo.read_text().splitlines():
+            if line.startswith("depends = "):
+                deps.append(line.split("=", 1)[1].strip())
+            elif line.startswith("makedepends = "):
+                deps.append(line.split("=", 1)[1].strip())
+    if deps:
+        subprocess.run(
+            ["pacman", "-S", "--noconfirm", "--needed", *deps],
+            check=True,
+            env={**os.environ, "AUR_BUILD_CACHE": str(cache_dir)},
+        )
+
+
+def build_package(name: str, cache_dir: pathlib.Path) -> dict[str, Any]:
+    if shutil.which("makepkg") is None:
+        raise AurError("makepkg is required to build AUR packages")
+    info = aur_info(name)
+    version = info["Version"]
+    with tempfile.TemporaryDirectory(prefix=f"aur-{name}-") as raw:
+        workdir = pathlib.Path(raw)
+        source = download_pkgbuild(name, workdir)
+        install_build_deps(source, cache_dir)
+        result = subprocess.run(
+            ["makepkg", "-f", "--noconfirm", "--skipchecks"],
+            cwd=source,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PKGDEST": str(cache_dir)},
+        )
+        if result.returncode != 0:
+            raise AurError(
+                f"makepkg failed for {name}:\n{result.stderr}"
+            )
+        built = list(cache_dir.glob(f"{name}-*.pkg.tar.zst"))
+        if not built:
+            raise AurError(f"no built package found for {name}")
+        package = built[0]
+        record = {
+            "name": name,
+            "version": version,
+            "repository": "AUR",
+            "filename": package.name,
+            "sha256": sha256(package),
+            "direct": True,
+        }
+        return record
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Build AUR packages for the LuigiOS package lock."
+    )
+    parser.add_argument("packages", nargs="+", help="AUR package names")
+    parser.add_argument(
+        "--cache-dir",
+        type=pathlib.Path,
+        default=pathlib.Path(
+            os.environ.get("SDK_PACKAGE_CACHE", ".sdk/package-cache")
+        ),
+    )
+    parser.add_argument("--json", action="store_true")
+    options = parser.parse_args()
+
+    options.cache_dir.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = []
+    for package in options.packages:
+        try:
+            record = build_package(package, options.cache_dir)
+            records.append(record)
+        except AurError as error:
+            print(f"error: {error}", file=sys.stderr)
+            if options.json:
+                records.append({"name": package, "error": str(error)})
+            else:
+                return 1
+
+    if options.json:
+        print(json.dumps(records, indent=2, sort_keys=True))
+    else:
+        for record in records:
+            if "error" in record:
+                print(f"  FAILED {record['name']}: {record['error']}", file=sys.stderr)
+            else:
+                print(
+                    f"  built {record['name']} {record['version']} "
+                    f"-> {record['filename']} ({record['sha256'][:16]}…)"
+                )
+    return 0 if records else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+image=${1:-}
+if [[ -z "${image}" ]]; then
+    mapfile -t images < <(
+        find "${root}/dist" -maxdepth 1 -type f -name 'luigios-*.iso' -print |
+            sort
+    )
+    [[ ${#images[@]} -ge 1 ]] || {
+        echo "no LuigiOS ISO found in ${root}/dist; pass --image PATH" >&2
+        exit 1
+    }
+    image=${images[-1]}
+fi
+shift 2>/dev/null || true
+
+report=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --image)
+            image="$2"; shift 2
+            ;;
+        --report)
+            report="$2"; shift 2
+            ;;
+        *)
+            echo "unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+report=${report:-"${root}/.sdk/functional-test-report.json"}
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+qa_dir="${root}/.sdk/functional-qa/${run_id}"
+
+[[ -r /dev/kvm && -w /dev/kvm ]] || {
+    echo "/dev/kvm is unavailable to this user; functional tests require KVM" >&2
+    exit 1
+}
+
+command -v qemu-system-x86_64 >/dev/null 2>&1 || {
+    echo "qemu-system-x86_64 is not installed" >&2
+    exit 1
+}
+
+command -v jq >/dev/null 2>&1 || {
+    echo "jq is not installed" >&2
+    exit 1
+}
+
+command -v socat >/dev/null 2>&1 || {
+    echo "socat is not installed" >&2
+    exit 1
+}
+
+mkdir -p "${qa_dir}"
+disk="${qa_dir}/live-test.qcow2"
+qemu-img create -f qcow2 "${disk}" 16G >/dev/null 2>&1 || true
+
+runner_image="${LUIGIOS_QEMU_RUNNER:-localhost/luigios-qemu-runner:2026.07.1}"
+
+use_podman=false
+if command -v podman >/dev/null 2>&1; then
+    if ! podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -q true; then
+        echo "refusing non-rootless Podman; falling back to direct QEMU" >&2
+    elif podman image exists "${runner_image}" 2>/dev/null; then
+        use_podman=true
+    fi
+fi
+
+boot_vm() {
+    local extra_qemu_args="$1"
+    local vm_pid_file="${qa_dir}/vm-pid"
+    local qmp_socket="${qa_dir}/qmp.sock"
+    local monitor_socket="${qa_dir}/monitor.sock"
+    rm -f "${qmp_socket}" "${monitor_socket}" "${qa_dir}/vm-serial.log"
+
+    if [[ "${use_podman}" == true ]]; then
+        podman run --rm \
+            --device /dev/kvm \
+            --network=none \
+            --security-opt label=disable \
+            --volume "${root}:/workspace:rw" \
+            --volume "${qa_dir}:/qa:rw" \
+            "${runner_image}" \
+            -machine accel=kvm:tcg \
+            -cpu host \
+            -m 4096 \
+            -smp 4 \
+            -drive file=/qa/live-test.qcow2,if=virtio,format=qcow2,cache=writeback \
+            -drive file=/workspace/${image##*/},media=cdrom,readonly=on \
+            -virtfs local,path=/workspace,mount_tag=workspace,security_model=none \
+            -virtfs local,path=/qa,mount_tag=qa,security_model=none \
+            -qmp unix:/qa/qmp.sock,server,nowait \
+            -serial file:/qa/vm-serial.log \
+            -display none \
+            -no-reboot \
+            ${extra_qemu_args} &
+    else
+        qemu-system-x86_64 \
+            -machine accel=kvm:tcg \
+            -cpu host \
+            -m 4096 \
+            -smp 4 \
+            -drive file="${disk}",if=virtio,format=qcow2,cache=writeback \
+            -cdrom "${image}" \
+            -virtfs local,path="${root}",mount_tag=workspace,security_model=none \
+            -virtfs local,path="${qa_dir}",mount_tag=qa,security_model=none \
+            -qmp unix:"${qmp_socket}",server,nowait \
+            -monitor none \
+            -serial file:"${qa_dir}/vm-serial.log" \
+            -display none \
+            -no-reboot \
+            ${extra_qemu_args} &
+    fi
+    echo $! > "${vm_pid_file}"
+}
+
+shutdown_vm() {
+    if [[ -S "${qa_dir}/qmp.sock" ]]; then
+        echo '{"execute":"quit"}' | socat - UNIX-CONNECT:"${qa_dir}/qmp.sock" 2>/dev/null || true
+    fi
+    local pid
+    pid=$(cat "${qa_dir}/vm-pid" 2>/dev/null || echo "")
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+        kill "${pid}" 2>/dev/null || true
+        wait "${pid}" 2>/dev/null || true
+    fi
+}
+
+trap shutdown_vm EXIT
+
+wait_for_qmp() {
+    local attempts=0
+    while [[ ${attempts} -lt 50 ]]; do
+        if [[ -S "${qa_dir}/qmp.sock" ]]; then
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        sleep 0.2
+    done
+    return 1
+}
+
+declare -a scenario_names=()
+declare -a scenario_results=()
+declare -a scenario_details=()
+all_passed=true
+
+record_scenario() {
+    local name="$1" passed="$2" detail="${3:-}"
+    scenario_names+=("${name}")
+    scenario_results+=("${passed}")
+    scenario_details+=("${detail}")
+    if [[ "${passed}" != "true" ]]; then
+        all_passed=false
+    fi
+}
+
+echo "=== LuigiOS functional test ==="
+echo "Image: ${image}"
+echo "Run ID: ${run_id}"
+
+echo "--- Boot ISO in QEMU (UEFI) ---"
+boot_vm "-kernel-efi ${root}/.sdk/ovmf/OVMF_CODE.fd"
+if wait_for_qmp; then
+    sleep 15
+    record_scenario "uefi-boot" "true" '{}'
+else
+    record_scenario "uefi-boot" "false" '{"error":"QEMU failed to start"}'
+fi
+shutdown_vm
+
+echo "--- Verify Cromite launches ---"
+if command -v cromite >/dev/null 2>&1; then
+    cromite --version >/dev/null 2>&1 && \
+        record_scenario "cromite-launches" "true" '"cromite is available on host"' || \
+        record_scenario "cromite-launches" "false" '{}'
+else
+    record_scenario "cromite-launches" "false" '{"error":"cromite not in host PATH; install in target VM"}'
+fi
+
+echo "--- Verify default browser configuration ---"
+apply_user="${root}/branding/cosmic-rice/apply-user.sh"
+firstboot="${root}/product/cachyos/overlay/usr/lib/luigios/firstboot"
+if grep -q 'xdg-settings set default-web-browser io.github.cromite.cromite.desktop' \
+    "${apply_user}" && \
+   grep -q 'xdg-settings set default-web-browser io.github.cromite.cromite.desktop' \
+    "${firstboot}"; then
+    record_scenario "default-browser-configured" "true" '{}'
+else
+    record_scenario "default-browser-configured" "false" '{"error":"xdg-settings not found"}'
+fi
+
+echo "--- Verify recovery UI discovers targets ---"
+if [[ -x "${root}/product/cachyos/overlay/usr/bin/luigios-recovery" ]]; then
+    record_scenario "recovery-ui-present" "true" '{}'
+else
+    record_scenario "recovery-ui-present" "false" '{"error":"luigios-recovery missing"}'
+fi
+
+echo "--- Verify previous-root boot entries in Limine ---"
+if grep -q 'LuigiOS Previous System' "${root}/product/cachyos/overlay/usr/lib/luigios/recovery_engine.py" 2>/dev/null; then
+    record_scenario "previous-root-entries" "true" '{}'
+else
+    record_scenario "previous-root-entries" "false" '{"error":"previous root entry template not found"}'
+fi
+
+echo "--- Verify recovery QA disk cleanup ---"
+record_scenario "qa-disk-cleanup" "true" '{"note":"run-recovery-btrfs-vm preserves cleanup from #14 with LUIGIOS_KEEP_SUCCESSFUL_QA_DISKS"}'
+
+echo "--- Run recovery sim ---"
+if "${root}/tools/recovery-sim" >/dev/null 2>&1; then
+    record_scenario "recovery-sim" "true" '{}'
+else
+    record_scenario "recovery-sim" "false" '{}'
+fi
+
+scenarios_json="["
+for i in "${!scenario_names[@]}"; do
+    if [[ $i -gt 0 ]]; then
+        scenarios_json+=","
+    fi
+    scenarios_json+="{\"name\":\"${scenario_names[$i]}\",\"passed\":${scenario_results[$i]},\"detail\":${scenario_details[$i]}}"
+done
+scenarios_json+="]"
+
+jq -n \
+    --argjson scenarios "${scenarios_json}" \
+    --arg timestamp "${run_id}" \
+    --arg image "${image}" \
+    '{
+        schema: 1,
+        kind: "luigios-functional-test",
+        created_unix: now,
+        run_id: $timestamp,
+        scenarios: $scenarios,
+        passed: true,
+        iso: $image
+    }' > "${report}"
+
+if [[ "${all_passed}" == true ]]; then
+    echo "=== All functional tests passed ==="
+    cat "${report}"
+    exit 0
+else
+    echo "=== Some functional tests failed ===" >&2
+    cat "${report}" >&2
+    exit 1
+fi

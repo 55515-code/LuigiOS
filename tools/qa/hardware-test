@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+runner=${LUIGIOS_VM_RUNNER_IMAGE:-localhost/luigios-qemu-runner:2026.07.1}
+
+usage() {
+    cat >&2 <<EOF
+usage: hardware-test --image PATH --device PATH [--report PATH] [--keep-disk]
+
+Runs a hardware boot test from the specified ISO image against a real disk device.
+This test is DESTRUCTIVE to the target device.
+
+Requires rootless Podman with /dev/kvm access and the luigios-qemu-runner image.
+
+Options:
+  --image PATH    (required) Path to the LuigiOS ISO to boot
+  --device PATH   (required) Target disk device for installation (e.g. /dev/sdb)
+  --report PATH   Output JSON report path (default: .sdk/hardware-test-report.json)
+  --keep-disk     Preserve test disk after completion for forensic analysis
+EOF
+    exit 2
+}
+
+image=""
+device=""
+report=""
+keep_disk=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --image)  image="$2"; shift 2 ;;
+        --device) device="$2"; shift 2 ;;
+        --report) report="$2"; shift 2 ;;
+        --keep-disk) keep_disk=true; shift ;;
+        *) echo "unknown argument: $1" >&2; usage ;;
+    esac
+done
+
+[[ -n "${image}" && -n "${device}" ]] || usage
+report=${report:-"${root}/.sdk/hardware-test-report.json"}
+
+[[ -r "${image}" ]] || { echo "ISO not readable: ${image}" >&2; exit 1; }
+[[ -b "${device}" ]] || { echo "device not a block device: ${device}" >&2; exit 1; }
+[[ -r /dev/kvm && -w /dev/kvm ]] || { echo "/dev/kvm unavailable" >&2; exit 1; }
+
+command -v jq >/dev/null 2>&1 || { echo "jq is not installed" >&2; exit 1; }
+command -v qemu-img >/dev/null 2>&1 || { echo "qemu-img is not installed" >&2; exit 1; }
+
+podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -q true || {
+    echo "refusing non-rootless Podman" >&2
+    exit 1
+}
+
+podman image exists "${runner}" 2>/dev/null || {
+    echo "the digest-pinned luigios-qemu-runner image is missing" >&2
+    exit 1
+}
+
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+qa_dir="${root}/.sdk/hardware-qa/${run_id}"
+install_dir="${qa_dir}/install"
+
+mkdir -p "${qa_dir}"
+
+disk="${qa_dir}/target.qcow2"
+qemu-img create -f qcow2 "${disk}" 64G >/dev/null 2>&1
+
+cat > "${qa_dir}/meta-data" <<EOF
+instance-id: luigios-hardware-${run_id}
+local-hostname: luigios-hardware-qa
+EOF
+
+cat > "${qa_dir}/user-data" <<EOF
+#cloud-config
+package_update: false
+bootcmd:
+  - mkdir -p /workspace
+  - mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=mmap workspace /workspace
+  - |
+    systemd-run --no-block --unit=luigios-hardware-qa \
+      /bin/bash -c '
+      set +e
+      export LUIGIOS_DESTRUCTIVE_VM_TEST=1
+      /workspace/tools/qa/hardware-test-runner \
+        --device ${device} \
+        --image ${image} \
+        --report /workspace/.sdk/hardware-test-report.json \
+        >/workspace/.sdk/hardware-test-run.log 2>&1
+      status=\$?
+      sync
+      systemctl --no-block poweroff --force
+      exit \${status}
+      '
+EOF
+
+xorriso -as mkisofs -quiet -volid cidata -joliet -rock \
+    -output "${qa_dir}/seed.iso" \
+    "${qa_dir}/meta-data" "${qa_dir}/user-data"
+
+podman run --rm \
+    --device /dev/kvm \
+    --device "${device}" \
+    --network=none \
+    --security-opt label=disable \
+    --volume "${root}:/workspace:rw" \
+    --volume "${qa_dir}:/qa:rw" \
+    "${runner}" \
+    -machine q35,accel=kvm:tcg \
+    -cpu host \
+    -m 8192 \
+    -smp 4 \
+    -drive file=/qa/target.qcow2,if=virtio,format=qcow2,cache=writeback \
+    -drive file=/workspace/${image##*/},media=cdrom,readonly=on \
+    -drive file=/qa/seed.iso,media=cdrom,readonly=on \
+    -virtfs local,path=/workspace,mount_tag=workspace,security_model=none \
+    -virtfs local,path=/qa,mount_tag=qa,security_model=none \
+    -netdev user,id=net0,restrict=on \
+    -device virtio-net-pci,netdev=net0 \
+    -display none \
+    -no-reboot
+
+[[ -f "${report}" ]] || {
+    echo "hardware test VM stopped without a report" >&2
+    exit 1
+}
+
+jq -e '.passed == true' "${report}" >/dev/null
+cat "${report}"
+
+if [[ "${keep_disk}" != true ]]; then
+    rm -rf "${qa_dir}"
+fi

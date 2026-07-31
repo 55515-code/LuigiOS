@@ -28,6 +28,7 @@ Commands:
   image        Build a release ISO from the verified package cache (root)
   image-dev    Build against current configured repositories (root, non-release)
   inspect      Validate the completed ISO and write its SHA-256 file
+  beta         Run the full beta pipeline with automated QA (needs --beta)
   clean        Remove generated Archiso work/profile output
 EOF
 }
@@ -219,7 +220,13 @@ EOF
     find "${PROFILE}/airootfs" \( -iname '*plasma*' -o -iname '*sddm*' \) \
         -print0 | xargs -0 -r rm -rf
     printf '%s\n' "${CACHYOS_ISO_COMMIT}" >"${PROFILE}/.luigios-source-commit"
-    echo "prepared ${PROFILE} at ${CACHYOS_ISO_COMMIT}"
+    if [[ "${LUIGIOS_BETA:-0}" == 1 ]]; then
+        sed -i 's/^iso_name="luigios"/iso_name="luigios-beta"/' "${PROFILE}/profiledef.sh"
+        sed -i '/^iso_label=/s/ +%Y%m)"$/ +%Y%m)-beta"/' "${PROFILE}/profiledef.sh"
+        echo "prepared beta profile at ${CACHYOS_ISO_COMMIT}"
+    else
+        echo "prepared ${PROFILE} at ${CACHYOS_ISO_COMMIT}"
+    fi
 }
 
 fetch_packages() {
@@ -241,16 +248,41 @@ for repository, expected in lock["sync_databases"].items():
     if actual != expected["sha256"]:
         raise SystemExit(f"sync database drifted: {repository}; regenerate the lock intentionally")
 PY
-    mapfile -t roots < <(
-        sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
-            awk 'NF { print $1 }'
+    mapfile -t aur_roots < <(
+        jq -r '.aur_packages[]?' "${ROOT}/sdk/package-lock.json" 2>/dev/null || true
     )
+    local -a repo_roots=()
+    while IFS= read -r pkg; do
+        repo_roots+=("${pkg}")
+    done < <(
+        sed 's/#.*//' "${ROOT}/product/cachyos/packages.x86_64" |
+            awk 'NF { print $1 }' |
+            while IFS= read -r pkg; do
+                local skip=false
+                for aur in "${aur_roots[@]}"; do
+                    if [[ "${pkg}" == "${aur}" ]]; then
+                        skip=true
+                        break
+                    fi
+                done
+                [[ "${skip}" == false ]] && echo "${pkg}"
+            done
+    )
+    if [[ ${#aur_roots[@]} -gt 0 ]]; then
+        echo "building AUR packages: ${aur_roots[*]}"
+        local aur
+        for aur in "${aur_roots[@]}"; do
+            "${ROOT}/tools/build-aur" "${aur}" \
+                --cache-dir "${CACHE}" \
+                --json >/dev/null
+        done
+    fi
     local -a pacman_command=(pacman)
     if [[ ${EUID} -ne 0 ]]; then
         pacman_command=(fakeroot pacman)
     fi
     "${pacman_command[@]}" --dbpath "${temporary}" --config "${temporary}/pacman.conf" \
-        -Sw --noconfirm --cachedir "${CACHE}" -- "${roots[@]}"
+        -Sw --noconfirm --cachedir "${CACHE}" -- "${repo_roots[@]}"
     "${ROOT}/tools/package-lock" verify-cache "${CACHE}"
     rm -rf "${temporary}"
 }
@@ -389,6 +421,7 @@ bootstrap_release_keyrings() {
 
 build_image() {
     local release=${1:-false}
+    local beta_mode=${2:-0}
     [[ ${EUID} -eq 0 ]] || {
         echo "image creation needs root; rerun this command with sudo or pkexec" >&2
         exit 1
@@ -413,6 +446,44 @@ build_image() {
     rm -rf "${WORK}"
     mkdir -p "${DIST}"
     mkarchiso -v -w "${WORK}" -o "${DIST}" "${PROFILE}"
+    if [[ "${beta_mode}" == 1 ]]; then
+        local iso
+        mapfile -t images < <(
+            find "${DIST}" -maxdepth 1 -type f -name 'luigios-*.iso' -print |
+                sort
+        )
+        if [[ ${#images[@]} -eq 1 ]]; then
+            iso="${images[0]}"
+            local dir basename
+            dir=$(dirname "${iso}")
+            basename=$(basename "${iso}" .iso)
+            if [[ "${basename}" != *-beta ]]; then
+                mv "${iso}" "${dir}/${basename}-beta.iso"
+                mv "${iso}.sha256" "${dir}/${basename}-beta.iso.sha256" 2>/dev/null || true
+            fi
+        fi
+    fi
+}
+
+beta() {
+    export LUIGIOS_BETA=1
+    echo "=== LuigiOS beta pipeline (LUIGIOS_BETA=1) ==="
+    lock_build
+    echo "--- lock ---"
+    "${ROOT}/tools/package-lock" generate
+    echo "--- prepare ---"
+    prepare
+    echo "--- fetch ---"
+    fetch_packages
+    echo "--- stage ---"
+    configure_locked_repo
+    echo "--- validate ---"
+    "${ROOT}/tools/ci-check"
+    echo "--- image ---"
+    build_image true 1
+    echo "--- inspect ---"
+    "${ROOT}/tools/inspect-image"
+    echo "=== Beta pipeline complete ==="
 }
 
 case ${1:-} in
@@ -425,14 +496,19 @@ case ${1:-} in
     stage) lock_build; configure_locked_repo ;;
     validate) "${ROOT}/tools/ci-check" ;;
     image)
+        if [[ "${2:-}" == "--beta" ]]; then
+            export LUIGIOS_BETA=1
+        fi
         if [[ ${EUID} -eq 0 || ${LUIGIOS_ROOTLESS_BUILDER:-0} == 1 ]]; then
             lock_build
-            build_image true
+            [[ -f "${PROFILE}/.luigios-source-commit" ]] || prepare
+            build_image true "${LUIGIOS_BETA:-0}"
         else
             exec "${ROOT}/tools/rootless-image"
         fi
         ;;
-    image-dev) lock_build; build_image false ;;
+    image-dev) lock_build; build_image false 0 ;;
+    beta) beta ;;
     inspect) "${ROOT}/tools/inspect-image" "${2:-}" ;;
     clean)
         lock_build

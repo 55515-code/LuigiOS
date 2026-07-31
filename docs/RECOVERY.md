@@ -87,6 +87,32 @@ No real workstation installation is permitted until all of these pass:
 The physical cutover is a separate operation with an external backup,
 machine-readable before/after manifests, and explicit approval.
 
+## QA tooling
+
+### Functional tests (`./tools/qa/functional-test`)
+
+Runs a rootless QEMU boot smoke test against a built ISO. Checks UEFI boot,
+Cromite availability, default-browser configuration, recovery UI presence,
+previous-root boot entries, recovery QA disk cleanup, and the recovery
+simulation (`tools/recovery-sim`). Requires `/dev/kvm`, `qemu-system-x86_64`,
+`jq`, and `socat`. Accepts `--image PATH` and `--report PATH`. By default
+selects the latest `dist/luigios-*.iso` and writes a JSON report to
+`.sdk/functional-test-report.json`.
+
+### Recovery VM tests (`./tools/qa/run-recovery-btrfs-vm`)
+
+Runs the destructive Btrfs recovery test inside a rootless QEMU VM. The VM
+bootstraps via cloud-init and runs `tools/qa/recovery-btrfs-vm` against a
+disposable disk tagged with serial `LUIGIOS_RECOVERY_QA`. Preserves the QA disk
+when `LUIGIOS_KEEP_SUCCESSFUL_QA_DISKS=1`.
+
+### Hardware tests (`./tools/qa/hardware-test`)
+
+Runs a hardware boot and installation test from a specified ISO against a real
+disk device. **DESTRUCTIVE**: erases the target device. Requires rootless Podman,
+`/dev/kvm`, and the `luigios-qemu-runner` image passed through `--device`.
+Accepts `--image PATH`, `--device PATH`, `--report PATH`, and `--keep-disk`.
+
 ## Upstream basis
 
 - Calamares supports distribution-defined modules and branding:

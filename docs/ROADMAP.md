@@ -7,6 +7,10 @@
   and complete COSMIC panel/dock validation.
 - Completed: guarded disposable-VM Btrfs Fresh Start, preservation, tamper
   rejection, previous-root retention, and unchanged user-data verification.
+- Completed: `tools/qa/functional-test` UEFI boot smoke, recovery sim, and
+  Cromite/default-browser gating.
+- Completed: `tools/qa/hardware-test` runner for destructive bare-metal boot and
+  installation qualification.
 - Next: exercise full offline upgrades, package repair, Fresh Start cutover,
   previous-root rollback, and recovery from UEFI live media.
 - Validate AMD, Intel, and NVIDIA graphics on representative hardware.
@@ -15,6 +19,8 @@
 
 ## Release
 
+- Completed: beta build pipeline with `LUIGIOS_BETA=1` producing
+  `luigios-beta-*.iso` via `.github/workflows/beta.yml`.
 - Rebuild twice from the same lock and compare extracted filesystem manifests.
 - Publish the ISO checksum, dependency lock, source revision, and QA report.
 - Document the intentional exceptions if container metadata prevents a

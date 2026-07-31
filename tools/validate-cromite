@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Validate Cromite is present in the product and correctly configured.
+
+Checks:
+  1. cromite-bin is listed in product/cachyos/packages.x86_64
+  2. The Cromite AUR package is recorded in the dependency lock
+  3. apply-user.sh and firstboot contain xdg-settings/xdg-mime config
+  4. The io.github.cromite.cromite.desktop desktop ID is referenced
+  5. If a profile directory is provided, verify the desktop entry exists
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+MANIFEST = ROOT / "product/cachyos/packages.x86_64"
+LOCK = ROOT / "sdk/package-lock.json"
+APPLY_USER = ROOT / "branding/cosmic-rice/apply-user.sh"
+FIRSTBOOT = ROOT / "product/cachyos/overlay/usr/lib/luigios/firstboot"
+DESKTOP_ID = "io.github.cromite.cromite.desktop"
+PKGNAME = "cromite-bin"
+
+XDG_COMMANDS = [
+    "xdg-settings set default-web-browser",
+    "xdg-mime default",
+    "text/html",
+    "x-scheme-handler/http",
+    "x-scheme-handler/https",
+]
+
+
+def manifest_roots() -> list[str]:
+    return [
+        line.split("#", 1)[0].strip()
+        for line in MANIFEST.read_text().splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+
+
+def check(
+    condition: bool, message: str, errors: list[str]
+) -> None:
+    status = "ok" if condition else "FAIL"
+    print(f"  [{status}] {message}")
+    if not condition:
+        errors.append(message)
+
+
+def validate_source() -> list[str]:
+    errors: list[str] = []
+    roots = manifest_roots()
+    check(PKGNAME in roots, f"{PKGNAME} in packages.x86_64", errors)
+
+    lock = json.loads(LOCK.read_text())
+    check(
+        PKGNAME in lock.get("roots", []),
+        f"{PKGNAME} in lock roots",
+        errors,
+    )
+    check(
+        PKGNAME in lock.get("aur_packages", []),
+        f"{PKGNAME} in lock aur_packages",
+        errors,
+    )
+    record = next(
+        (p for p in lock.get("packages", []) if p["name"] == PKGNAME),
+        None,
+    )
+    check(record is not None, f"{PKGNAME} has a lock record", errors)
+    if record:
+        check(
+            record.get("repository") == "AUR",
+            f"{PKGNAME} lock record is AUR-sourced",
+            errors,
+        )
+        check(
+            len(record.get("sha256", "")) == 64
+            and record.get("filename"),
+            f"{PKGNAME} lock record is complete",
+            errors,
+        )
+
+    apply_user_text = APPLY_USER.read_text()
+    firstboot_text = FIRSTBOOT.read_text()
+    check(
+        DESKTOP_ID in apply_user_text,
+        f"{DESKTOP_ID} referenced in apply-user.sh",
+        errors,
+    )
+    check(
+        DESKTOP_ID in firstboot_text,
+        f"{DESKTOP_ID} referenced in firstboot",
+        errors,
+    )
+    for command in XDG_COMMANDS:
+        check(
+            command in apply_user_text,
+            f"apply-user.sh has: {command}",
+            errors,
+        )
+        check(
+            command in firstboot_text,
+            f"firstboot has: {command}",
+            errors,
+        )
+    return errors
+
+
+def validate_profile(profile: pathlib.Path) -> list[str]:
+    errors: list[str] = []
+    desktop = (
+        profile
+        / "airootfs/usr/share/applications/io.github.cromite.cromite.desktop"
+    )
+    check(
+        desktop.is_file(),
+        f"Cromite desktop entry in profile: {desktop.relative_to(profile)}",
+        errors,
+    )
+    return errors
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile",
+        type=pathlib.Path,
+        help="Optional prepared Archiso profile to inspect",
+    )
+    args = parser.parse_args()
+
+    print("Validating Cromite integration…")
+    errors = validate_source()
+    if args.profile and args.profile.is_dir():
+        errors.extend(validate_profile(args.profile))
+
+    if errors:
+        print(f"\n{len(errors)} Cromite validation failure(s):", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+    print("\nCromite validation passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

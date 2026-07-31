@@ -442,5 +442,82 @@ class ProductContract(unittest.TestCase):
             self.assertEqual([item for item in files if item.is_file()], [])
 
 
+class CromiteContract(unittest.TestCase):
+    def test_cromite_bin_is_a_package_root(self):
+        packages = [
+            line.split("#", 1)[0].strip()
+            for line in (ROOT / "product/cachyos/packages.x86_64").read_text().splitlines()
+            if line.split("#", 1)[0].strip()
+        ]
+        self.assertIn("cromite-bin", packages)
+
+    def test_cromite_is_locked_and_aur_sourced(self):
+        lock = json.loads((ROOT / "sdk/package-lock.json").read_text())
+        self.assertIn("cromite-bin", lock["roots"])
+        self.assertIn("cromite-bin", lock.get("aur_packages", []))
+        record = next(
+            p for p in lock["packages"] if p["name"] == "cromite-bin"
+        )
+        self.assertEqual(record["repository"], "AUR")
+        self.assertTrue(record["direct"])
+        self.assertEqual(len(record["sha256"]), 64)
+        self.assertTrue(record["filename"])
+
+    def test_cromite_is_default_browser_in_live_seed(self):
+        apply_user = (
+            ROOT / "branding/cosmic-rice/apply-user.sh"
+        ).read_text()
+        self.assertIn(
+            "io.github.cromite.cromite.desktop", apply_user
+        )
+        self.assertIn(
+            "xdg-settings set default-web-browser io.github.cromite.cromite.desktop",
+            apply_user,
+        )
+        self.assertIn(
+            "xdg-mime default io.github.cromite.cromite.desktop text/html",
+            apply_user,
+        )
+        self.assertIn(
+            "xdg-mime default io.github.cromite.cromite.desktop x-scheme-handler/http",
+            apply_user,
+        )
+        self.assertIn(
+            "xdg-mime default io.github.cromite.cromite.desktop x-scheme-handler/https",
+            apply_user,
+        )
+
+    def test_cromite_is_default_browser_in_firstboot(self):
+        firstboot = (
+            ROOT / "product/cachyos/overlay/usr/lib/luigios/firstboot"
+        ).read_text()
+        self.assertIn(
+            "xdg-settings set default-web-browser io.github.cromite.cromite.desktop",
+            firstboot,
+        )
+        self.assertIn(
+            "xdg-mime default io.github.cromite.cromite.desktop",
+            firstboot,
+        )
+
+    def test_cromite_favorites_entry_is_present(self):
+        apply_user = (
+            ROOT / "branding/cosmic-rice/apply-user.sh"
+        ).read_text()
+        favorites = apply_user[
+            apply_user.index("write_cosmic com.system76.CosmicAppList favorites"):
+        ]
+        self.assertIn('"io.github.cromite.cromite"', favorites)
+
+    def test_aur_packages_field_is_consistent(self):
+        lock = json.loads((ROOT / "sdk/package-lock.json").read_text())
+        aur_packages = set(lock.get("aur_packages", []))
+        aur_records = {
+            p["name"] for p in lock["packages"]
+            if p.get("repository") == "AUR"
+        }
+        self.assertEqual(aur_packages, aur_records)
+
+
 if __name__ == "__main__":
     unittest.main()
