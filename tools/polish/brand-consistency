@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Validate brand consistency across LuigiOS assets and configurations."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import sys
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+errors: list[str] = []
+warnings: list[str] = []
+
+
+def error(message: str) -> None:
+    errors.append(message)
+
+
+def warn(message: str) -> None:
+    warnings.append(message)
+
+
+def check_legacy_terms() -> None:
+    """Check for legacy terms that should be removed."""
+    legacy_terms = [
+        "batocera",
+        "steam deck",
+        "gamescope",
+        "retroarch",
+        "emulationstation",
+        "fedora atomic",
+        "bootc",
+    ]
+
+    scan_exclusions = {
+        ROOT / "LICENSE",
+        ROOT / "product/cachyos/forbidden-packages.txt",
+        ROOT / "tools/validate-product",
+        ROOT / "tools/sdk",
+        ROOT / "tools/inspect-image",
+        ROOT / "tools/polish/brand-consistency",
+        ROOT / "docs/AUTOMATION.md",
+    }
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        tracked = result.stdout.splitlines()
+    except Exception:
+        return
+
+    for relative in tracked:
+        path = ROOT / relative
+        if not path.is_file() or path in scan_exclusions:
+            continue
+        try:
+            text = path.read_text().lower()
+        except UnicodeDecodeError:
+            continue
+        for term in legacy_terms:
+            if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", text):
+                error(f"Legacy term '{term}' found in {relative}")
+
+
+def check_luigios_branding() -> None:
+    """Check that LuigiOS branding is consistent."""
+    # Check hostname
+    hostname_path = ROOT / "product" / "cachyos" / "overlay" / "etc" / "hostname"
+    if hostname_path.exists():
+        hostname = hostname_path.read_text().strip()
+        if hostname != "luigios":
+            error(f"Hostname should be 'luigios', found '{hostname}'")
+
+    # Check boot entries
+    entries_dir = ROOT / "product" / "cachyos" / "archiso" / "efiboot" / "loader" / "entries"
+    if entries_dir.exists():
+        for entry in entries_dir.glob("*.conf"):
+            content = entry.read_text()
+            if "LuigiOS" not in content:
+                error(f"Boot entry {entry.name} missing 'LuigiOS' branding")
+            if "CachyOS" in content:
+                error(f"Boot entry {entry.name} contains legacy 'CachyOS' reference")
+
+    # Check installer desktop entry
+    installer_entry = ROOT / "product" / "cachyos" / "archiso" / "luigios-installer.desktop"
+    if installer_entry.exists():
+        content = installer_entry.read_text()
+        if "LuigiOS Setup & Recovery" not in content:
+            error("Installer desktop entry missing 'LuigiOS Setup & Recovery' name")
+
+
+def check_cosmic_exclusivity() -> None:
+    """Check that COSMIC is the exclusive desktop."""
+    product_path = ROOT / "product" / "cachyos" / "product.json"
+    if not product_path.exists():
+        return
+
+    try:
+        product = json.loads(product_path.read_text())
+        desktop = product.get("desktop", {})
+        if desktop.get("session") != "cosmic":
+            error("Desktop session must be 'cosmic'")
+        if not desktop.get("exclusive"):
+            error("Desktop exclusivity must be explicit")
+    except Exception as exc:
+        error(f"Product.json validation error: {exc}")
+
+
+def check_package_consistency() -> None:
+    """Check package naming consistency."""
+    packages_path = ROOT / "product" / "cachyos" / "packages.x86_64"
+    if not packages_path.exists():
+        return
+
+    packages = [
+        line.split("#", 1)[0].strip()
+        for line in packages_path.read_text().splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+
+    # Check for required packages
+    required = ["cosmic-session", "cosmic-greeter", "plymouth"]
+    for pkg in required:
+        if pkg not in packages:
+            error(f"Required package '{pkg}' not in packages.x86_64")
+
+    # Check for forbidden packages
+    forbidden_path = ROOT / "product" / "cachyos" / "forbidden-packages.txt"
+    if forbidden_path.exists():
+        import fnmatch
+        forbidden = [
+            line.strip().lower()
+            for line in forbidden_path.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        for pkg in packages:
+            if any(fnmatch.fnmatchcase(pkg.lower(), pattern) for pattern in forbidden):
+                error(f"Forbidden package '{pkg}' found in packages.x86_64")
+
+
+def check_recovery_branding() -> None:
+    """Check recovery UI branding."""
+    recovery_engine = ROOT / "product" / "cachyos" / "overlay" / "usr" / "lib" / "luigios" / "recovery_engine.py"
+    if not recovery_engine.exists():
+        return
+
+    try:
+        content = recovery_engine.read_text()
+        if "LuigiOS" not in content:
+            warn("Recovery engine missing 'LuigiOS' branding")
+    except Exception:
+        pass
+
+
+def generate_report() -> dict[str, Any]:
+    """Generate brand consistency report."""
+    return {
+        "schema": 1,
+        "kind": "luigios-brand-consistency",
+        "errors": len(errors),
+        "warnings": len(warnings),
+        "error_details": errors,
+        "warning_details": warnings,
+    }
+
+
+def main() -> int:
+    print("=== LuigiOS brand consistency validation ===")
+
+    check_legacy_terms()
+    check_luigios_branding()
+    check_cosmic_exclusivity()
+    check_package_consistency()
+    check_recovery_branding()
+
+    report = generate_report()
+
+    if errors:
+        print(f"\n{len(errors)} error(s) found:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+
+    if warnings:
+        print(f"\n{len(warnings)} warning(s):", file=sys.stderr)
+        for warn in warnings:
+            print(f"  - {warn}", file=sys.stderr)
+
+    if not errors:
+        print("✓ All brand consistency checks passed")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    import subprocess
+    sys.exit(main())

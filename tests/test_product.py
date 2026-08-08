@@ -420,6 +420,21 @@ class ProductContract(unittest.TestCase):
         self.assertIn('efiBootloaderId: "luigios"', customize)
         self.assertNotIn("initialSwapChoice: none", partition)
 
+    def test_installed_bootloader_config_exists_and_correct(self):
+        bootloader_conf = (
+            ROOT / "product/cachyos/overlay/etc/calamares/modules/bootloader.conf"
+        )
+        self.assertTrue(
+            bootloader_conf.is_file(),
+            "bootloader.conf must exist in the overlay for Calamares Limine integration",
+        )
+        content = bootloader_conf.read_text()
+        self.assertIn("bootloader: limine", content)
+        self.assertIn('efiBootloaderId: "luigios"', content)
+        self.assertNotIn("lugios", content, "must not contain misspelled 'lugios'")
+        self.assertIn("limineSplashLogo", content)
+        self.assertIn("/boot", content)
+
     def test_installer_service_policy_matches_product(self):
         services = json.loads((ROOT / "product/cachyos/services.json").read_text())
         module = (

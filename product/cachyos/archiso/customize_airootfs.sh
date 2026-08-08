@@ -56,10 +56,25 @@ if source.count(old) != 1:
     raise SystemExit(f"unexpected CachyOS pacstrap bootloader API in {path}")
 path.write_text(source.replace(old, new))
 PY
-sed -i \
-    -e 's/efiBootloaderId: "cachyos"/efiBootloaderId: "luigios"/' \
-    -e 's#limineSplashLogo: .*#limineSplashLogo: "/usr/share/luigios/branding/assets/boot/boot-logo-1280x800.png"#' \
-    /etc/calamares/modules/bootloader.conf
+# Override CachyOS defaults to LuigiOS Limine identity. If the overlay
+# already provides the correct values (preferred), the sed becomes a no-op.
+# If the package-provided file is different, we force the correct values.
+bootloader_conf=/etc/calamares/modules/bootloader.conf
+if [[ -f "${bootloader_conf}" ]]; then
+    sed -i \
+        -e 's/efiBootloaderId:.*"cachyos".*/efiBootloaderId: "luigios"/' \
+        -e 's#limineSplashLogo: .*#limineSplashLogo: "/usr/share/luigios/branding/assets/boot/boot-logo-1280x800.png"#' \
+        "${bootloader_conf}"
+    # Validate the modification succeeded
+    if ! grep -q 'efiBootloaderId: "luigios"' "${bootloader_conf}"; then
+        echo "WARNING: could not set efiBootloaderId to luigios in ${bootloader_conf}" >&2
+    fi
+    if ! grep -q 'limineSplashLogo:.*luigios.*boot-logo' "${bootloader_conf}"; then
+        echo "WARNING: could not set limineSplashLogo in ${bootloader_conf}" >&2
+    fi
+else
+    echo "WARNING: ${bootloader_conf} not found, using overlay default" >&2
+fi
 
 # limine-mkinitcpio-hook intentionally replaces Arch's normal mkinitcpio ALPM
 # hook for installed systems. A live Archiso has no mounted ESP, so that hook

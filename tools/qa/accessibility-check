@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Validate accessibility compliance for LuigiOS UI assets and configurations."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import sys
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+errors: list[str] = []
+warnings: list[str] = []
+
+
+def error(message: str) -> None:
+    errors.append(message)
+
+
+def warn(message: str) -> None:
+    warnings.append(message)
+
+
+def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert hex color to RGB tuple."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 8:  # #RRGGBBAA
+        hex_color = hex_color[:6]
+    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def relative_luminance(rgb: tuple[int, int, int]) -> float:
+    """Calculate relative luminance per WCAG 2.0."""
+    r, g, b = [x / 255.0 for x in rgb]
+    r = r / 12.92 if r <= 0.03928 else ((r + 0.055) / 1.055) ** 2.4
+    g = g / 12.92 if g <= 0.03928 else ((g + 0.055) / 1.055) ** 2.4
+    b = b / 12.92 if b <= 0.03928 else ((b + 0.055) / 1.055) ** 2.4
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(fg: str, bg: str) -> float:
+    """Calculate WCAG contrast ratio between two colors."""
+    try:
+        fg_rgb = hex_to_rgb(fg)
+        bg_rgb = hex_to_rgb(bg)
+        l1 = relative_luminance(fg_rgb)
+        l2 = relative_luminance(bg_rgb)
+        lighter = max(l1, l2)
+        darker = min(l1, l2)
+        return (lighter + 0.05) / (darker + 0.05)
+    except Exception:
+        return 0.0
+
+
+def validate_color_contrast() -> None:
+    """Validate color contrast in design tokens."""
+    tokens_path = ROOT / "branding" / "design-tokens-v1.json"
+    if not tokens_path.exists():
+        return
+
+    try:
+        tokens = json.loads(tokens_path.read_text())
+    except json.JSONDecodeError:
+        return
+
+    # Check text colors against background
+    if "color" in tokens:
+        colors = tokens["color"]
+        if isinstance(colors, dict):
+            # Check primary text against background
+            if "text" in colors and "background" in colors:
+                text_color = colors["text"]
+                bg_color = colors["background"]
+                if isinstance(text_color, str) and isinstance(bg_color, str):
+                    ratio = contrast_ratio(text_color, bg_color)
+                    if ratio < 4.5:
+                        error(f"Text/background contrast ratio {ratio:.2f}:1 below WCAG AA minimum (4.5:1)")
+                    elif ratio < 7.0:
+                        warn(f"Text/background contrast ratio {ratio:.2f}:1 below WCAG AAA (7.0:1)")
+
+            # Check secondary text
+            if "textSecondary" in colors and "background" in colors:
+                text_color = colors["textSecondary"]
+                bg_color = colors["background"]
+                if isinstance(text_color, str) and isinstance(bg_color, str):
+                    ratio = contrast_ratio(text_color, bg_color)
+                    if ratio < 4.5:
+                        error(f"Secondary text contrast ratio {ratio:.2f}:1 below WCAG AA minimum")
+
+
+def validate_icon_accessibility() -> None:
+    """Validate icon accessibility (alt text, titles)."""
+    icon_dirs = [
+        ROOT / "branding" / "cosmic-rice" / "icon-theme",
+        ROOT / "branding" / "cosmic-rice" / "vscode-theme" / "icons",
+    ]
+
+    for icon_dir in icon_dirs:
+        if not icon_dir.exists():
+            continue
+
+        for svg in icon_dir.rglob("*.svg"):
+            try:
+                content = svg.read_text()
+                # Check for title or aria-label
+                if "<title" not in content and "aria-label" not in content:
+                    warn(f"{svg.name}: missing <title> or aria-label for accessibility")
+            except Exception:
+                pass
+
+
+def validate_font_sizes() -> None:
+    """Validate font sizes meet accessibility minimums."""
+    tokens_path = ROOT / "branding" / "design-tokens-v1.json"
+    if not tokens_path.exists():
+        return
+
+    try:
+        tokens = json.loads(tokens_path.read_text())
+    except json.JSONDecodeError:
+        return
+
+    if "typography" in tokens:
+        typo = tokens["typography"]
+        if isinstance(typo, dict) and "fontSize" in typo:
+            for key, size in typo["fontSize"].items():
+                if isinstance(size, (int, float)):
+                    if size < 12:
+                        error(f"Font size '{key}' ({size}px) below accessibility minimum (12px)")
+                    elif size < 14:
+                        warn(f"Font size '{key}' ({size}px) below recommended minimum (14px)")
+
+
+def validate_touch_targets() -> None:
+    """Validate touch target sizes in UI configurations."""
+    # Check COSMIC panel configuration for minimum touch targets
+    apply_user = ROOT / "branding" / "cosmic-rice" / "apply-user.sh"
+    if not apply_user.exists():
+        return
+
+    try:
+        content = apply_user.read_text()
+        # Look for panel element size configurations
+        if "element_size" in content:
+            # Extract size values
+            sizes = re.findall(r'element_size.*?(\d+)', content)
+            for size_str in sizes:
+                size = int(size_str)
+                if size < 32:
+                    error(f"Touch target size {size}px below accessibility minimum (32px)")
+                elif size < 44:
+                    warn(f"Touch target size {size}px below recommended minimum (44px)")
+    except Exception:
+        pass
+
+
+def validate_keyboard_navigation() -> None:
+    """Validate keyboard navigation support in scripts."""
+    scripts = [
+        ROOT / "branding" / "cosmic-rice" / "apply-user.sh",
+        ROOT / "product" / "cachyos" / "overlay" / "usr" / "lib" / "luigios" / "firstboot",
+    ]
+
+    for script in scripts:
+        if not script.exists():
+            continue
+
+        try:
+            content = script.read_text()
+            # Check for interactive prompts that should support keyboard nav
+            if "read -p" in content or "dialog" in content:
+                if "timeout" not in content and "default" not in content:
+                    warn(f"{script.name}: interactive prompt may need keyboard navigation support")
+        except Exception:
+            pass
+
+
+def generate_report() -> dict[str, Any]:
+    """Generate accessibility report."""
+    return {
+        "schema": 1,
+        "kind": "luigios-accessibility-check",
+        "errors": len(errors),
+        "warnings": len(warnings),
+        "error_details": errors,
+        "warning_details": warnings,
+    }
+
+
+def main() -> int:
+    print("=== LuigiOS accessibility validation ===")
+
+    validate_color_contrast()
+    validate_icon_accessibility()
+    validate_font_sizes()
+    validate_touch_targets()
+    validate_keyboard_navigation()
+
+    report = generate_report()
+
+    if errors:
+        print(f"\n{len(errors)} error(s) found:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+
+    if warnings:
+        print(f"\n{len(warnings)} warning(s):", file=sys.stderr)
+        for warn in warnings:
+            print(f"  - {warn}", file=sys.stderr)
+
+    if not errors:
+        print("✓ All accessibility validations passed")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

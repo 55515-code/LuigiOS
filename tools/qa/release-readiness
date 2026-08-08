@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Calculate release readiness score for LuigiOS beta."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import subprocess
+import sys
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+def check_product_contract() -> tuple[bool, str]:
+    """Validate product contract."""
+    try:
+        result = subprocess.run(
+            [str(ROOT / "tools" / "validate-product")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Product contract validated"
+        return False, f"Product contract validation failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Product contract check error: {exc}"
+
+
+def check_package_lock() -> tuple[bool, str]:
+    """Validate package lock."""
+    try:
+        result = subprocess.run(
+            [str(ROOT / "tools" / "package-lock"), "validate"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Package lock validated"
+        return False, f"Package lock validation failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Package lock check error: {exc}"
+
+
+def check_cromite() -> tuple[bool, str]:
+    """Validate Cromite integration."""
+    try:
+        result = subprocess.run(
+            [str(ROOT / "tools" / "validate-cromite")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Cromite integration validated"
+        return False, f"Cromite validation failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Cromite check error: {exc}"
+
+
+def check_tests() -> tuple[bool, str]:
+    """Run unit tests."""
+    try:
+        result = subprocess.run(
+            ["python", "-m", "unittest", "discover", "-s", "tests", "-v"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=ROOT,
+        )
+        if result.returncode == 0:
+            return True, "All tests passed"
+        return False, f"Tests failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Test execution error: {exc}"
+
+
+def check_recovery_sim() -> tuple[bool, str]:
+    """Run recovery simulation."""
+    try:
+        result = subprocess.run(
+            [str(ROOT / "tools" / "recovery-sim")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Recovery simulation passed"
+        return False, f"Recovery simulation failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Recovery sim error: {exc}"
+
+
+def check_design_tokens() -> tuple[bool, str]:
+    """Validate design tokens."""
+    try:
+        result = subprocess.run(
+            ["python", str(ROOT / "tools" / "polish" / "design-tokens-validate")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Design tokens validated"
+        return False, f"Design token validation failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Design token check error: {exc}"
+
+
+def check_accessibility() -> tuple[bool, str]:
+    """Validate accessibility."""
+    try:
+        result = subprocess.run(
+            ["python", str(ROOT / "tools" / "qa" / "accessibility-check")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Accessibility checks passed"
+        return False, f"Accessibility checks failed: {result.stderr[:200]}"
+    except Exception as exc:
+        return False, f"Accessibility check error: {exc}"
+
+
+def check_version_consistency() -> tuple[bool, str]:
+    """Check version consistency."""
+    try:
+        product = json.loads((ROOT / "product" / "cachyos" / "product.json").read_text())
+        version_file = (ROOT / "VERSION").read_text().strip()
+        if product["version"] == version_file:
+            return True, f"Version consistent: {version_file}"
+        return False, f"Version mismatch: product={product['version']}, VERSION={version_file}"
+    except Exception as exc:
+        return False, f"Version check error: {exc}"
+
+
+def calculate_readiness_score() -> dict[str, Any]:
+    """Calculate overall readiness score."""
+    checks = [
+        ("product_contract", check_product_contract),
+        ("package_lock", check_package_lock),
+        ("cromite", check_cromite),
+        ("tests", check_tests),
+        ("recovery_sim", check_recovery_sim),
+        ("design_tokens", check_design_tokens),
+        ("accessibility", check_accessibility),
+        ("version_consistency", check_version_consistency),
+    ]
+
+    results = []
+    passed_count = 0
+
+    for name, check_fn in checks:
+        passed, message = check_fn()
+        results.append({
+            "check": name,
+            "passed": passed,
+            "message": message,
+        })
+        if passed:
+            passed_count += 1
+
+    score = (passed_count / len(checks)) * 100 if checks else 0
+
+    return {
+        "schema": 1,
+        "kind": "luigios-release-readiness",
+        "score": round(score, 1),
+        "passed": passed_count,
+        "total": len(checks),
+        "checks": results,
+        "ready_for_beta": score >= 80,
+        "ready_for_release": score >= 95,
+    }
+
+
+def main() -> int:
+    print("=== LuigiOS release readiness assessment ===\n")
+
+    report = calculate_readiness_score()
+
+    print(f"Score: {report['score']}% ({report['passed']}/{report['total']} checks passed)\n")
+
+    for check in report["checks"]:
+        status = "✓" if check["passed"] else "✗"
+        print(f"  {status} {check['check']}: {check['message']}")
+
+    print()
+    if report["ready_for_release"]:
+        print("✓ Ready for production release")
+    elif report["ready_for_beta"]:
+        print("✓ Ready for beta release")
+    else:
+        print("✗ Not ready for release; address failing checks")
+
+    # Write report
+    report_path = ROOT / ".sdk" / "release-readiness-report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2))
+    print(f"\nReport written to {report_path}")
+
+    return 0 if report["ready_for_beta"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

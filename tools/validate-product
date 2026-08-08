@@ -89,6 +89,8 @@ scan_exclusions = {
     ROOT / "tools/validate-product",
     ROOT / "tools/sdk",
     ROOT / "tools/inspect-image",
+    ROOT / "tools/polish/brand-consistency",
+    ROOT / "docs/AUTOMATION.md",
 }
 tracked = subprocess.run(
     ["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],

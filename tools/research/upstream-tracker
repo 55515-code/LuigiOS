@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Track upstream package versions and security advisories for LuigiOS."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import subprocess
+import sys
+from datetime import datetime, timezone
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+warnings: list[str] = []
+info: list[str] = []
+
+
+def warn(message: str) -> None:
+    warnings.append(message)
+
+
+def log_info(message: str) -> None:
+    info.append(message)
+
+
+def check_package_lock_freshness() -> None:
+    """Check if package-lock.json is recent."""
+    lock_path = ROOT / "sdk" / "package-lock.json"
+    if not lock_path.exists():
+        warn("package-lock.json not found")
+        return
+
+    lock_data = json.loads(lock_path.read_text())
+    created_unix = lock_data.get("created_unix", 0)
+    if created_unix:
+        age_days = (datetime.now(timezone.utc).timestamp() - created_unix) / 86400
+        if age_days > 30:
+            warn(f"package-lock.json is {age_days:.1f} days old; consider refreshing")
+        else:
+            log_info(f"package-lock.json is {age_days:.1f} days old")
+
+
+def check_forbidden_packages() -> None:
+    """Verify no forbidden packages are in the lock file."""
+    lock_path = ROOT / "sdk" / "package-lock.json"
+    forbidden_path = ROOT / "product" / "cachyos" / "forbidden-packages.txt"
+
+    if not lock_path.exists() or not forbidden_path.exists():
+        return
+
+    lock_data = json.loads(lock_path.read_text())
+    locked_packages = {pkg["name"] for pkg in lock_data.get("packages", [])}
+
+    forbidden_patterns = [
+        line.strip().lower()
+        for line in forbidden_path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+    import fnmatch
+    violations = [
+        pkg for pkg in locked_packages
+        if any(fnmatch.fnmatchcase(pkg.lower(), pattern) for pattern in forbidden_patterns)
+    ]
+
+    if violations:
+        warn(f"Forbidden packages found in lock: {', '.join(violations)}")
+    else:
+        log_info("No forbidden packages in lock file")
+
+
+def check_aur_package_status() -> None:
+    """Check AUR package status if tools are available."""
+    lock_path = ROOT / "sdk" / "package-lock.json"
+    if not lock_path.exists():
+        return
+
+    lock_data = json.loads(lock_path.read_text())
+    aur_packages = lock_data.get("aur_packages", [])
+
+    if not aur_packages:
+        log_info("No AUR packages to check")
+        return
+
+    log_info(f"Tracking {len(aur_packages)} AUR package(s): {', '.join(aur_packages)}")
+
+    # Note: Actual AUR RPC queries would require network access
+    # This is a placeholder for offline validation
+    for pkg in aur_packages:
+        log_info(f"AUR package: {pkg} (manual verification required)")
+
+
+def check_product_contract_consistency() -> None:
+    """Verify product.json aligns with package-lock.json."""
+    product_path = ROOT / "product" / "cachyos" / "product.json"
+    lock_path = ROOT / "sdk" / "package-lock.json"
+    packages_path = ROOT / "product" / "cachyos" / "packages.x86_64"
+
+    if not all(p.exists() for p in [product_path, lock_path, packages_path]):
+        return
+
+    product = json.loads(product_path.read_text())
+    lock_data = json.loads(lock_path.read_text())
+
+    # Check version consistency
+    product_version = product.get("version")
+    version_file = ROOT / "VERSION"
+    if version_file.exists():
+        file_version = version_file.read_text().strip()
+        if product_version != file_version:
+            warn(f"Version mismatch: product.json={product_version}, VERSION={file_version}")
+        else:
+            log_info(f"Version consistent: {product_version}")
+
+    # Check package roots are in lock
+    roots = {
+        line.split("#", 1)[0].strip()
+        for line in packages_path.read_text().splitlines()
+        if line.split("#", 1)[0].strip()
+    }
+    locked = {pkg["name"] for pkg in lock_data.get("packages", [])}
+    missing = roots - locked
+    if missing:
+        warn(f"Package roots not in lock: {', '.join(missing)}")
+    else:
+        log_info(f"All {len(roots)} package roots are locked")
+
+
+def check_security_tooling() -> None:
+    """Verify security tooling is configured."""
+    product_path = ROOT / "product" / "cachyos" / "product.json"
+    if not product_path.exists():
+        return
+
+    product = json.loads(product_path.read_text())
+    security = product.get("security", {})
+
+    required_tools = ["firewall", "firmware_updates", "vulnerability_audit"]
+    for tool in required_tools:
+        if tool not in security:
+            warn(f"Security tooling '{tool}' not configured in product.json")
+        else:
+            log_info(f"Security tooling '{tool}': {security[tool]}")
+
+
+def generate_report() -> dict[str, Any]:
+    """Generate research report."""
+    return {
+        "schema": 1,
+        "kind": "luigios-upstream-tracker",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "warnings": len(warnings),
+        "info_count": len(info),
+        "warning_details": warnings,
+        "info_details": info,
+    }
+
+
+def main() -> int:
+    print("=== LuigiOS upstream tracking and research ===")
+
+    check_package_lock_freshness()
+    check_forbidden_packages()
+    check_aur_package_status()
+    check_product_contract_consistency()
+    check_security_tooling()
+
+    report = generate_report()
+
+    if warnings:
+        print(f"\n{len(warnings)} warning(s):", file=sys.stderr)
+        for warn in warnings:
+            print(f"  - {warn}", file=sys.stderr)
+
+    if info:
+        print(f"\n{len(info)} info item(s):")
+        for item in info:
+            print(f"  - {item}")
+
+    if not warnings:
+        print("\n✓ All upstream checks passed")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

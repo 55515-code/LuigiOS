@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Optimize and validate image assets for LuigiOS beta release."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+errors: list[str] = []
+warnings: list[str] = []
+optimized_count = 0
+
+# File size thresholds (bytes)
+MAX_WALLPAPER_SIZE = 2 * 1024 * 1024  # 2MB
+MAX_ICON_SIZE = 100 * 1024  # 100KB
+MAX_LOGO_SIZE = 500 * 1024  # 500KB
+MAX_SPLASH_SIZE = 1 * 1024 * 1024  # 1MB
+
+
+def error(message: str) -> None:
+    errors.append(message)
+
+
+def warn(message: str) -> None:
+    warnings.append(message)
+
+
+def check_file_size(path: pathlib.Path, max_size: int, category: str) -> None:
+    """Check if file exceeds size threshold."""
+    if not path.exists():
+        return
+    size = path.stat().st_size
+    if size > max_size:
+        warn(f"{category} {path.name}: {size / 1024:.1f}KB exceeds {max_size / 1024:.1f}KB threshold")
+
+
+def validate_svg(path: pathlib.Path) -> None:
+    """Validate SVG file structure."""
+    if not path.exists():
+        return
+    try:
+        content = path.read_text()
+        if "<svg" not in content:
+            error(f"{path.name}: not a valid SVG file")
+        if "xmlns" not in content:
+            error(f"{path.name}: missing xmlns attribute")
+    except Exception as exc:
+        error(f"{path.name}: failed to read: {exc}")
+
+
+def optimize_png(path: pathlib.Path) -> bool:
+    """Optimize PNG file if tools are available."""
+    global optimized_count
+    if not path.exists():
+        return False
+
+    # Try optipng first
+    if shutil.which("optipng"):
+        try:
+            result = subprocess.run(
+                ["optipng", "-quiet", "-o2", str(path)],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                optimized_count += 1
+                return True
+        except Exception:
+            pass
+
+    # Try pngquant as fallback
+    if shutil.which("pngquant"):
+        try:
+            result = subprocess.run(
+                ["pngquant", "--force", "--ext=.png", "--quality=65-80", str(path)],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                optimized_count += 1
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def optimize_svg(path: pathlib.Path) -> bool:
+    """Optimize SVG file if svgo is available."""
+    global optimized_count
+    if not path.exists():
+        return False
+
+    if shutil.which("svgo"):
+        try:
+            result = subprocess.run(
+                ["svgo", "--quiet", str(path)],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                optimized_count += 1
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def validate_wallpapers() -> None:
+    """Validate and optimize wallpaper assets."""
+    wallpapers_dir = ROOT / "branding" / "assets" / "desktop" / "wallpapers"
+    if not wallpapers_dir.exists():
+        return
+
+    for png in wallpapers_dir.rglob("*.png"):
+        check_file_size(png, MAX_WALLPAPER_SIZE, "wallpaper")
+        if "--optimize" in sys.argv:
+            optimize_png(png)
+
+
+def validate_icons() -> None:
+    """Validate and optimize icon assets."""
+    icon_dirs = [
+        ROOT / "branding" / "cosmic-rice" / "icon-theme",
+        ROOT / "branding" / "cosmic-rice" / "vscode-theme" / "icons",
+    ]
+
+    for icon_dir in icon_dirs:
+        if not icon_dir.exists():
+            continue
+
+        for svg in icon_dir.rglob("*.svg"):
+            validate_svg(svg)
+            check_file_size(svg, MAX_ICON_SIZE, "icon")
+            if "--optimize" in sys.argv:
+                optimize_svg(svg)
+
+
+def validate_logos() -> None:
+    """Validate and optimize logo assets."""
+    logos_dir = ROOT / "branding" / "assets" / "core"
+    if not logos_dir.exists():
+        return
+
+    for svg in logos_dir.glob("*.svg"):
+        validate_svg(svg)
+        check_file_size(svg, MAX_LOGO_SIZE, "logo")
+        if "--optimize" in sys.argv:
+            optimize_svg(svg)
+
+
+def validate_boot_assets() -> None:
+    """Validate boot splash and logo assets."""
+    boot_dir = ROOT / "branding" / "assets" / "boot"
+    if not boot_dir.exists():
+        return
+
+    for png in boot_dir.glob("*.png"):
+        check_file_size(png, MAX_SPLASH_SIZE, "boot asset")
+        if "--optimize" in sys.argv:
+            optimize_png(png)
+
+
+def generate_report() -> dict[str, Any]:
+    """Generate validation report."""
+    return {
+        "schema": 1,
+        "kind": "luigios-asset-polish",
+        "errors": len(errors),
+        "warnings": len(warnings),
+        "optimized": optimized_count,
+        "error_details": errors,
+        "warning_details": warnings,
+    }
+
+
+def main() -> int:
+    print("=== LuigiOS asset polishing and validation ===")
+
+    validate_wallpapers()
+    validate_icons()
+    validate_logos()
+    validate_boot_assets()
+
+    report = generate_report()
+
+    if errors:
+        print(f"\n{len(errors)} error(s) found:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+
+    if warnings:
+        print(f"\n{len(warnings)} warning(s):", file=sys.stderr)
+        for warn in warnings:
+            print(f"  - {warn}", file=sys.stderr)
+
+    if optimized_count > 0:
+        print(f"\n✓ Optimized {optimized_count} asset(s)")
+
+    if not errors:
+        print("✓ All asset validations passed")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

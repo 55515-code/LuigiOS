@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# LuigiOS Beta Automation Suite
+# Runs all polishing, research, and QA checks for beta release readiness
+
+root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "${root}"
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║          LuigiOS Beta Automation Suite                        ║"
+echo "║          Comprehensive Polish, Research & QA                  ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Track overall status
+declare -a passed=()
+declare -a failed=()
+declare -a skipped=()
+
+run_check() {
+    local name="$1"
+    local cmd="$2"
+    local description="$3"
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "▶ ${description}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if eval "${cmd}"; then
+        passed+=("${name}")
+        echo "✓ PASSED: ${name}"
+    else
+        failed+=("${name}")
+        echo "✗ FAILED: ${name}"
+    fi
+    echo ""
+}
+
+skip_check() {
+    local name="$1"
+    local reason="$2"
+    skipped+=("${name}")
+    echo "⊘ SKIPPED: ${name} (${reason})"
+    echo ""
+}
+
+# 1. Product Contract Validation
+run_check "product-contract" \
+    "./tools/validate-product" \
+    "Validating product contract and boundaries"
+
+# 2. Package Lock Validation
+run_check "package-lock" \
+    "./tools/package-lock validate" \
+    "Validating package lock integrity"
+
+# 3. Cromite Integration
+run_check "cromite-validation" \
+    "./tools/validate-cromite" \
+    "Validating Cromite browser integration"
+
+# 4. Unit Tests
+run_check "unit-tests" \
+    "python -m unittest discover -s tests -v" \
+    "Running unit tests"
+
+# 5. Recovery Simulation
+run_check "recovery-sim" \
+    "./tools/recovery-sim" \
+    "Running recovery simulation"
+
+# 6. Design Token Validation
+run_check "design-tokens" \
+    "python tools/polish/design-tokens-validate" \
+    "Validating design tokens and brand assets"
+
+# 7. Asset Optimization Check
+run_check "asset-polish" \
+    "python tools/polish/asset-optimize" \
+    "Checking and optimizing image assets"
+
+# 8. Accessibility Validation
+run_check "accessibility" \
+    "python tools/qa/accessibility-check" \
+    "Validating accessibility compliance"
+
+# 9. Brand Consistency
+run_check "brand-consistency" \
+    "python tools/polish/brand-consistency" \
+    "Validating brand consistency"
+
+# 10. Upstream Tracking
+run_check "upstream-tracker" \
+    "python tools/research/upstream-tracker" \
+    "Tracking upstream packages and security"
+
+# 11. Release Readiness Score
+run_check "release-readiness" \
+    "python tools/qa/release-readiness" \
+    "Calculating release readiness score"
+
+# 12. CI Checks (syntax validation)
+run_check "ci-checks" \
+    "./tools/ci-check" \
+    "Running CI syntax and validation checks"
+
+# Summary
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║                    AUTOMATION SUMMARY                         ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "✓ Passed:  ${#passed[@]}"
+echo "✗ Failed:  ${#failed[@]}"
+echo "⊘ Skipped: ${#skipped[@]}"
+echo ""
+
+if [[ ${#passed[@]} -gt 0 ]]; then
+    echo "Passed checks:"
+    for check in "${passed[@]}"; do
+        echo "  ✓ ${check}"
+    done
+    echo ""
+fi
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+    echo "Failed checks:"
+    for check in "${failed[@]}"; do
+        echo "  ✗ ${check}"
+    done
+    echo ""
+fi
+
+if [[ ${#skipped[@]} -gt 0 ]]; then
+    echo "Skipped checks:"
+    for check in "${skipped[@]}"; do
+        echo "  ⊘ ${check}"
+    done
+    echo ""
+fi
+
+# Calculate readiness percentage
+total_checks=$((${#passed[@]} + ${#failed[@]}))
+if [[ ${total_checks} -gt 0 ]]; then
+    readiness=$(( ${#passed[@]} * 100 / total_checks ))
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Beta Readiness Score: ${readiness}%"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    if [[ ${readiness} -ge 95 ]]; then
+        echo "✓ READY FOR PRODUCTION RELEASE"
+        exit 0
+    elif [[ ${readiness} -ge 80 ]]; then
+        echo "✓ READY FOR BETA RELEASE"
+        exit 0
+    else
+        echo "✗ NOT READY - Address failing checks before release"
+        exit 1
+    fi
+else
+    echo "No checks were executed"
+    exit 1
+fi

@@ -9,6 +9,13 @@ python -m unittest discover -s tests -v
 ./tools/validate-product
 ./tools/validate-cromite
 
+# Run automation suite checks
+python tools/polish/design-tokens-validate
+python tools/polish/asset-optimize
+python tools/qa/accessibility-check
+python tools/polish/brand-consistency
+python tools/research/upstream-tracker
+
 bash -n tools/sdk
 bash -n branding/cosmic-rice/apply-user.sh
 bash -n branding/cosmic-rice/apply-system.sh
@@ -18,6 +25,12 @@ python -m py_compile tools/package-lock tools/check-dco tools/release-source \
     tools/build-aur tools/validate-cromite \
     tools/qa/recovery-btrfs-vm \
     tools/qa/qmp \
+    tools/polish/design-tokens-validate \
+    tools/polish/asset-optimize \
+    tools/polish/brand-consistency \
+    tools/qa/accessibility-check \
+    tools/qa/release-readiness \
+    tools/research/upstream-tracker \
     product/cachyos/overlay/usr/lib/luigios/recovery_engine.py
 bash -n tools/qa/run-recovery-btrfs-vm
 ./tools/recovery-sim >/dev/null

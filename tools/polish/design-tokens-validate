@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Validate design tokens and brand consistency for LuigiOS."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import sys
+from typing import Any
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+errors: list[str] = []
+
+
+def error(message: str) -> None:
+    errors.append(message)
+
+
+def validate_color_format(value: Any, path: str) -> None:
+    """Validate hex color format."""
+    if not isinstance(value, str):
+        error(f"{path}: color must be a string")
+        return
+    if not value.startswith("#"):
+        error(f"{path}: color must start with #")
+        return
+    if len(value) not in (7, 9):  # #RRGGBB or #RRGGBBAA
+        error(f"{path}: color must be #RRGGBB or #RRGGBBAA")
+
+
+def validate_contrast_ratio(fg: str, bg: str, path: str, min_ratio: float = 4.5) -> None:
+    """Validate WCAG contrast ratio."""
+    # Simplified contrast check - in production would use proper luminance calculation
+    # For now, ensure colors are different enough
+    if fg.lower() == bg.lower():
+        error(f"{path}: foreground and background colors are identical")
+
+
+def validate_design_tokens() -> None:
+    """Validate design-tokens-v1.json."""
+    tokens_path = ROOT / "branding" / "design-tokens-v1.json"
+    if not tokens_path.exists():
+        error("design-tokens-v1.json not found")
+        return
+
+    try:
+        tokens = json.loads(tokens_path.read_text())
+    except json.JSONDecodeError as exc:
+        error(f"design-tokens-v1.json: invalid JSON: {exc}")
+        return
+
+    if not isinstance(tokens, dict):
+        error("design-tokens-v1.json: root must be an object")
+        return
+
+    # Validate color tokens
+    if "color" in tokens:
+        color_section = tokens["color"]
+        if not isinstance(color_section, dict):
+            error("design-tokens-v1.json: color must be an object")
+        else:
+            for key, value in color_section.items():
+                if isinstance(value, str):
+                    validate_color_format(value, f"color.{key}")
+
+    # Validate spacing tokens
+    if "spacing" in tokens:
+        spacing_section = tokens["spacing"]
+        if not isinstance(spacing_section, dict):
+            error("design-tokens-v1.json: spacing must be an object")
+        else:
+            for key, value in spacing_section.items():
+                if not isinstance(value, (int, float)):
+                    error(f"spacing.{key}: must be a number")
+                elif value < 0:
+                    error(f"spacing.{key}: must be non-negative")
+
+    # Validate typography tokens
+    if "typography" in tokens:
+        typo_section = tokens["typography"]
+        if not isinstance(typo_section, dict):
+            error("design-tokens-v1.json: typography must be an object")
+        else:
+            if "fontSize" in typo_section:
+                for key, value in typo_section["fontSize"].items():
+                    if not isinstance(value, (int, float)):
+                        error(f"typography.fontSize.{key}: must be a number")
+                    elif value <= 0:
+                        error(f"typography.fontSize.{key}: must be positive")
+
+
+def validate_brand_manifest() -> None:
+    """Validate manifest-v2.json."""
+    manifest_path = ROOT / "branding" / "manifest-v2.json"
+    if not manifest_path.exists():
+        error("manifest-v2.json not found")
+        return
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        error(f"manifest-v2.json: invalid JSON: {exc}")
+        return
+
+    if not isinstance(manifest, dict):
+        error("manifest-v2.json: root must be an object")
+        return
+
+    # Validate required fields (relaxed for actual structure)
+    # manifest-v2.json uses "schema" and "product" instead of "id" and "version"
+    required = ["schema", "product"]
+    for field in required:
+        if field not in manifest:
+            error(f"manifest-v2.json: missing required field '{field}'")
+
+    # Validate colors if present
+    if "colors" in manifest:
+        colors = manifest["colors"]
+        if not isinstance(colors, dict):
+            error("manifest-v2.json: colors must be an object")
+        else:
+            for key, value in colors.items():
+                if isinstance(value, str):
+                    validate_color_format(value, f"colors.{key}")
+
+
+def validate_asset_references() -> None:
+    """Validate that referenced assets exist."""
+    manifest_path = ROOT / "branding" / "manifest-v2.json"
+    if not manifest_path.exists():
+        return
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError:
+        return
+
+    if "assets" in manifest:
+        assets = manifest["assets"]
+        if isinstance(assets, dict):
+            for key, path_str in assets.items():
+                if isinstance(path_str, str):
+                    asset_path = ROOT / "branding" / path_str
+                    if not asset_path.exists():
+                        error(f"manifest-v2.json: asset '{key}' not found at {path_str}")
+
+
+def main() -> int:
+    print("=== LuigiOS design token and brand validation ===")
+
+    validate_design_tokens()
+    validate_brand_manifest()
+    validate_asset_references()
+
+    if errors:
+        print(f"\n{len(errors)} error(s) found:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    print("✓ All design tokens and brand assets validated")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

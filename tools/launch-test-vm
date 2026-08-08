@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Launch LuigiOS VM for testing
+# Usage: ./launch-test-vm.sh [--install] [--live]
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+VM_DIR="${ROOT}/.sdk/manual-vm"
+ISO="${ROOT}/dist/luigios-2026.07.28-x86_64.iso"
+DISK="${VM_DIR}/test-disk.qcow2"
+OVMF_CODE="${VM_DIR}/OVMF_CODE.fd"
+OVMF_VARS="${VM_DIR}/OVMF_VARS.fd"
+SERIAL_LOG="${VM_DIR}/vm-serial.log"
+VNC_PORT="${LUIGIOS_VNC_PORT:-5900}"
+
+# Parse arguments
+MODE="live"
+for arg in "$@"; do
+    case "$arg" in
+        --install) MODE="install" ;;
+        --live) MODE="live" ;;
+        --vnc=*) VNC_PORT="${arg#*=}" ;;
+    esac
+done
+
+if [[ ! -f "${ISO}" ]]; then
+    echo "Error: ISO not found at ${ISO}" >&2
+    echo "Build first with: ./tools/sdk image" >&2
+    exit 1
+fi
+
+# Clean up previous serial log
+rm -f "${SERIAL_LOG}"
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║              LuigiOS Test VM Launcher                         ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "ISO: ${ISO}"
+echo "Disk: ${DISK}"
+echo "Mode: ${MODE}"
+echo "VNC: localhost:${VNC_PORT}"
+echo ""
+
+# Build QEMU command
+QEMU_ARGS=(
+    -name "LuigiOS-Test"
+    -machine accel=kvm:tcg
+    -cpu host
+    -m 4096
+    -smp 4
+    -drive "file=${OVMF_CODE},if=pflash,format=raw,readonly=on"
+    -drive "file=${OVMF_VARS},if=pflash,format=qcow2"
+    -drive "file=${DISK},if=virtio,format=qcow2,cache=writeback"
+    -cdrom "${ISO}"
+    -boot order=d,menu=on
+    -net nic,model=virtio
+    -net user,hostfwd=tcp::2222-:22,hostfwd=tcp::5900-${VNC_PORT}
+    -vnc :0
+    -serial file:"${SERIAL_LOG}"
+    -monitor none
+    -no-reboot
+)
+
+if [[ "${MODE}" == "install" ]]; then
+    echo "Starting VM in INSTALL mode..."
+    echo "Connect via VNC to localhost:${VNC_PORT} to run the installer"
+else
+    echo "Starting VM in LIVE mode..."
+    echo "Connect via VNC to localhost:${VNC_PORT} to use the live system"
+fi
+
+echo ""
+echo "Serial output: tail -f ${SERIAL_LOG}"
+echo "Stop VM: kill \$(cat ${VM_DIR}/vm.pid) or press Ctrl+C"
+echo ""
+
+# Launch QEMU in background
+cd "${VM_DIR}"
+qemu-system-x86_64 "${QEMU_ARGS[@]}" &
+VM_PID=$!
+echo "${VM_PID}" > vm.pid
+
+echo "VM started with PID ${VM_PID}"
+echo ""
+echo "To connect via VNC:"
+echo "  vinagre localhost:${VNC_PORT}"
+echo "  or: remote-viewer vnc://localhost:${VNC_PORT}"
+echo ""
+echo "To monitor serial output:"
+echo "  tail -f ${SERIAL_LOG}"
+echo ""
+echo "To stop the VM:"
+echo "  kill ${VM_PID}"
+echo ""
+
+# Wait for VM to exit
+wait ${VM_PID} || true
+echo "VM stopped"
